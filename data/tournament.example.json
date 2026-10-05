@@ -1,0 +1,34 @@
+{
+  "tournament": {
+    "name": "Example Cup",
+    "shortName": "EXC",
+    "season": "2026",
+    "primaryColor": "#1d4ed8",
+    "accentColor": "#f59e0b",
+    "venues": ["Main Ground"],
+    "rules": { "oversPerInnings": 8, "ballsPerOver": 6, "maxOversPerBowler": 2, "playersPerSide": 11, "wideRuns": 1, "noBallRuns": 1, "freeHit": true },
+    "points": { "win": 2, "loss": 0, "tie": 1, "noResult": 1, "stages": ["league"], "nrrAllOutUsesFullQuota": true }
+  },
+  "teams": [
+    {
+      "name": "Red Rockets", "shortName": "RR", "color": "#b91c1c",
+      "players": [
+        { "name": "Player One", "role": "batter", "jerseyNumber": 1 },
+        { "name": "Player Two", "role": "wicketkeeper", "jerseyNumber": 2 },
+        { "name": "Player Three", "role": "bowler", "jerseyNumber": 3, "bowlingStyle": "Right-arm medium" }
+      ]
+    },
+    {
+      "name": "Blue Blazers", "shortName": "BB", "color": "#1d4ed8",
+      "players": [
+        { "name": "Player Four", "role": "allrounder", "jerseyNumber": 4 },
+        { "name": "Player Five", "role": "batter", "jerseyNumber": 5, "battingStyle": "left" },
+        { "name": "Player Six", "role": "bowler", "jerseyNumber": 6 }
+      ]
+    }
+  ],
+  "fixtures": [
+    { "number": 1, "stage": "league", "teamA": "RR", "teamB": "BB", "venue": "Main Ground", "scheduledAt": "2026-11-01T09:00:00+05:30" },
+    { "number": 2, "stage": "final", "teamALabel": "1st place", "teamBLabel": "2nd place", "venue": "Main Ground", "scheduledAt": "2026-11-08T15:00:00+05:30" }
+  ]
+}

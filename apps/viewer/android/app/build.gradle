@@ -1,0 +1,77 @@
+apply plugin: 'com.android.application'
+
+// Release signing: create android/keystore.properties (never commit it) with
+//   storeFile=/absolute/path/release.jks
+//   storePassword=...   keyAlias=...   keyPassword=...
+// or set the CRICKET_KEYSTORE_* environment variables. See docs/ANDROID.md.
+def keystoreProps = new Properties()
+def keystoreFile = rootProject.file('keystore.properties')
+if (keystoreFile.exists()) keystoreFile.withInputStream { keystoreProps.load(it) }
+def ks = { key, env -> keystoreProps.getProperty(key) ?: System.getenv(env) }
+def hasReleaseKey = ks('storeFile', 'CRICKET_KEYSTORE_FILE') != null
+
+android {
+    namespace "com.cricketscoring.tournament"
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "com.cricketscoring.tournament"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        // Bump for every Play Store upload (or pass -PversionCode=N -PversionName=x.y.z).
+        versionCode Integer.parseInt((project.findProperty('versionCode') ?: '1').toString())
+        versionName project.findProperty('versionName') ?: '1.0.0'
+        manifestPlaceholders = [appLinkHost: project.findProperty('appLinkHost') ?: 'scores.example.com']
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        release {
+            if (hasReleaseKey) {
+                storeFile file(ks('storeFile', 'CRICKET_KEYSTORE_FILE'))
+                storePassword ks('storePassword', 'CRICKET_KEYSTORE_PASSWORD')
+                keyAlias ks('keyAlias', 'CRICKET_KEY_ALIAS')
+                keyPassword ks('keyPassword', 'CRICKET_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (hasReleaseKey) signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

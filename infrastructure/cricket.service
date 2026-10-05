@@ -1,0 +1,20 @@
+# Alternative to pm2: /etc/systemd/system/cricket.service
+[Unit]
+Description=Cricket scoring server
+After=network.target mongod.service
+Requires=mongod.service
+
+[Service]
+Type=simple
+User=cricket
+WorkingDirectory=/opt/cricket/server
+ExecStart=/usr/bin/node --env-file=.env src/index.js
+Restart=always
+RestartSec=2
+TimeoutStopSec=15
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

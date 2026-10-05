@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Arial Narrow", "Roboto Condensed", ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif;
+}
+
+html, body, #root { height: 100%; margin: 0; background: #000; color: #fff; overflow: hidden; cursor: none; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+@keyframes pop { 0% { transform: scale(.6); opacity: 0; } 15% { transform: scale(1.08); opacity: 1; } 25% { transform: scale(1); } 85% { opacity: 1; } 100% { opacity: 0; } }
+.pop { animation: pop 2.6s ease-out forwards; }

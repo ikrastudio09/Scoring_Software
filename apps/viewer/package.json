@@ -1,0 +1,35 @@
+{
+  "name": "@cricket/viewer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:android": "vite build --mode android",
+    "preview": "vite preview",
+    "cap:sync": "npm run build:android && cap sync android",
+    "android:debug": "npm run cap:sync && cd android && gradlew assembleDebug",
+    "android:release": "npm run cap:sync && cd android && gradlew assembleRelease bundleRelease"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^7.6.9",
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^7.6.9",
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^4.7.0",
+    "tailwindcss": "^4.3.3",
+    "vite": "^6.4.3"
+  },
+  "dependencies": {
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/core": "^7.6.9",
+    "@capacitor/splash-screen": "^7.0.5",
+    "@capacitor/status-bar": "^7.0.6",
+    "@cricket/client": "*",
+    "@cricket/shared": "*",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router": "^7.9.0"
+  }
+}

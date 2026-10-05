@@ -1,0 +1,31 @@
+{
+  "name": "cricket-scoring",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Single-tournament cricket scoring system: scorer console, LED display, viewer web + Android app",
+  "type": "module",
+  "engines": {
+    "node": ">=20.18"
+  },
+  "workspaces": [
+    "packages/*",
+    "server",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w server",
+    "dev:admin": "npm run dev -w apps/admin",
+    "dev:viewer": "npm run dev -w apps/viewer",
+    "dev:led": "npm run dev -w apps/led",
+    "build": "npm run build -w apps/admin && npm run build -w apps/viewer && npm run build -w apps/led",
+    "start": "npm start -w server",
+    "test": "npm test -w server",
+    "test:engine": "npm run test:engine -w server",
+    "seed": "npm run seed -w server --",
+    "load": "node load/run-load.js",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
+  }
+}
