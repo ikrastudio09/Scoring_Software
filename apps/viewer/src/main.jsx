@@ -41,3 +41,8 @@ createRoot(document.getElementById('root')).render(
 );
 
 initNative();
+
+// Installable PWA (browser only; the Android app ships its own copy of the bundle).
+if (import.meta.env.PROD && 'serviceWorker' in navigator && !window.Capacitor?.isNativePlatform?.()) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => {}); });
+}

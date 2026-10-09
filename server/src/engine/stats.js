@@ -19,7 +19,8 @@ export function extractPlayerStats(state, setup) {
     }
   }
 
-  for (const inn of state.innings) {
+  // Super Overs decide a tie but never count toward player statistics (ICC).
+  for (const inn of state.innings.filter((i) => !i.superOver)) {
     for (const id of inn.battingOrder) {
       const b = inn.batters[id];
       const row = rows.get(id);

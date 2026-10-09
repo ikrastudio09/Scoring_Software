@@ -8,8 +8,8 @@ import { getTournament } from './tournament.js';
 import { audit } from './audit.js';
 import { getRuntime, invalidateRuntime, withMatchLock } from './runtime.js';
 import { publishStatusChange, publishTournament } from '../realtime/hub.js';
-import { onResultsChanged } from './stats.js';
-import { suggestPlayerOfMatch } from '../engine/index.js';
+import { getMatchMvp, onResultsChanged } from './stats.js';
+import { invalidateActiveMatch } from './active.js';
 
 const S = MATCH_STATUS;
 const TEAM_FIELDS = 'name shortName color logoUrl group';
@@ -51,6 +51,7 @@ export function serializeMatch(m) {
       text: m.result.text,
       marginRuns: m.result.marginRuns ?? undefined,
       marginWickets: m.result.marginWickets ?? undefined,
+      superOver: Boolean(m.result.superOver),
       confirmed: Boolean(m.result.confirmed),
       confirmedAt: m.result.confirmedAt,
       playerOfMatch: m.result.playerOfMatch?.name
@@ -123,6 +124,12 @@ export async function updateMatch(id, data, user) {
     const started = await hasEvents(m._id);
     const set = {};
     for (const k of ALWAYS_EDITABLE) if (data[k] !== undefined) set[k] = data[k];
+    // League vs knockout decides whether a tie goes to a Super Over, so it is part of the
+    // scoring rules once play has started.
+    const isLeague = (stage) => (stage || 'league') === 'league';
+    if (started && data.stage !== undefined && isLeague(data.stage) !== isLeague(m.stage)) {
+      throw conflict('After scoring has started a match cannot move between the league and a knockout stage', ERROR_CODES.INVALID_TRANSITION);
+    }
     if (data.number !== undefined) set.number = data.number;
     const structural = ['teamA', 'teamB', 'rules'].filter((k) => data[k] !== undefined);
     if (structural.length) {
@@ -153,6 +160,7 @@ export async function deleteMatch(id, user) {
     if (await hasEvents(m._id)) throw conflict('A match with scoring events cannot be deleted', ERROR_CODES.INVALID_TRANSITION);
     await m.deleteOne();
     invalidateRuntime(id);
+    invalidateActiveMatch();
     await audit(user, 'match.delete', 'match', id, { number: m.number });
     publishTournament(SOCKET_EVENTS.MATCH_STATUS_CHANGED, { matchId: String(id), status: 'DELETED' });
   });
@@ -227,6 +235,7 @@ export async function changeStatus(id, { status, note }, user) {
     }
     await Match.updateOne({ _id: m._id }, { $set: set });
     invalidateRuntime(id);
+    invalidateActiveMatch();
     await audit(user, 'match.status', 'match', id, { from: m.status, to: status, note });
     return { from: m.status, to: status };
   });
@@ -257,6 +266,7 @@ export async function confirmResult(id, { playerOfMatch }, user) {
     });
     rt.match = { ...m, result: { ...m.result, confirmed: true, confirmedAt, confirmedBy: user?.username, playerOfMatch: playerOfMatch || null } };
     rt.views = {};
+    invalidateActiveMatch();
     await audit(user, 'match.confirm', 'match', id, { result: m.result.text, playerOfMatch });
   });
   const rt = await getRuntime(id);
@@ -275,6 +285,7 @@ export async function reopenMatch(id, { reason }, user) {
     await Match.updateOne({ _id: rt.match._id }, { $set: { 'result.confirmed': false, 'result.confirmedAt': null } });
     rt.match = { ...rt.match, result: { ...rt.match.result, confirmed: false, confirmedAt: null } };
     rt.views = {};
+    invalidateActiveMatch();
     await audit(user, 'match.reopen', 'match', id, { reason });
   });
   const rt = await getRuntime(id);
@@ -283,11 +294,12 @@ export async function reopenMatch(id, { reason }, user) {
   return getMatch(id);
 }
 
+/** The match MVP #1 (same impact formula as the MVP rankings, so the two always agree). */
 export async function playerOfMatchSuggestion(id) {
   const rt = await getRuntime(id);
   if (!rt.state || rt.state.status !== 'COMPLETED') return null;
-  const s = suggestPlayerOfMatch(rt.state, rt.setup);
-  return s ? { ...s, name: rt.meta.players[s.playerId]?.name } : null;
+  const top = (await getMatchMvp(id, 1)).players[0];
+  return top ? { playerId: top.playerId, name: top.name, score: top.impact.total, reasons: top.impact.reasons } : null;
 }
 
 export async function listEvents(id) {

@@ -61,8 +61,21 @@ const BALL_STYLE = (label) => {
   return 'bg-white text-slate-900 ring-1 ring-slate-300';
 };
 
-export function BallChip({ label, size = 'h-8 min-w-8 text-xs' }) {
-  return <span className={`inline-flex items-center justify-center rounded-full px-1.5 font-semibold tnum ${size} ${BALL_STYLE(label)}`}>{label === '0' ? '•' : label}</span>;
+const BALL_STYLE_DARK = (label) => {
+  if (label === '0') return 'bg-white/10 text-white/60';
+  if (/^[1-35-7]$/.test(label)) return 'bg-white text-slate-950';
+  return BALL_STYLE(label);
+};
+
+export function BallChip({ label, size = 'h-8 min-w-8 text-xs', dark = false }) {
+  return <span className={`inline-flex items-center justify-center rounded-full px-1.5 font-semibold tnum ${size} ${dark ? BALL_STYLE_DARK(label) : BALL_STYLE(label)}`}>{label === '0' ? '•' : label}</span>;
+}
+
+/** Player photo with the team colour as fallback (initials). */
+export function Avatar({ name, photoUrl, color, size = 'h-10 w-10 text-xs' }) {
+  if (photoUrl) return <img src={photoUrl} alt="" loading="lazy" className={`${size} shrink-0 rounded-full bg-slate-200 object-cover`} />;
+  const initials = (name || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+  return <span className={`${size} inline-flex shrink-0 items-center justify-center rounded-full font-bold text-white`} style={{ background: color || '#64748b' }}>{initials}</span>;
 }
 
 export function Spinner({ label = 'Loading…' }) {

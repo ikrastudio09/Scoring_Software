@@ -32,7 +32,18 @@ const tournamentSchema = new mongoose.Schema({
     stages: { type: [String], default: ['league'] },
     // NRR: a side bowled out is charged the full quota of overs (standard ICC rule).
     nrrAllOutUsesFullQuota: { type: Boolean, default: true },
+    // Order of tie-breakers after points (see services/points.js).
+    tiebreakers: { type: [String], default: ['nrr', 'wins', 'headToHead'] },
+    // Bonus point for a dominant win (see engine/bonus.js).
+    bonus: {
+      enabled: { type: Boolean, default: true },
+      points: { type: Number, default: 1, min: 0, max: 5 },
+      runsPercent: { type: Number, default: 75, min: 1, max: 100 },
+      oversPercent: { type: Number, default: 75, min: 1, max: 100 },
+    },
   },
+  // Overrides of the MVP impact weights (engine/impact.js DEFAULT_IMPACT_WEIGHTS). Partial.
+  impactWeights: { type: mongoose.Schema.Types.Mixed },
 }, { timestamps: true });
 
 export const Tournament = mongoose.model('Tournament', tournamentSchema);

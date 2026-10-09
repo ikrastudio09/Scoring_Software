@@ -34,20 +34,35 @@ Match envelope:
   "eventId": "6ac2…:57",
   "ts": 1791124690892,                // server time (ms)
   "effects": ["BALL", "FOUR"],        // [] for snapshots
-  "live": { /* LiveView (viewer, led) or ScorerView (admin) */ }
+  "live": { /* LiveView (viewer, led) or ScorerView (admin) */ },
+  "ball": {                           // deliveries only: compact summary + local commentary
+    "seq": 57, "innings": 2, "over": "16.4", "kind": "four", "label": "4", "runs": 4,
+    "score": "127/5", "text": "Jitendra to Abdul Danish, FOUR! Pulled to the boundary.",
+    "scoreText": "SGM Strikers move to 127/5. Need 21 from 20 balls.",
+    "milestones": ["…"], "endOfOver": { "over": 17, "runs": 9, "wickets": 0, "score": "…", "text": "…" }
+  }
 }
 ```
 
+Measured size of a delivery envelope: about 2.2 KB. One envelope is built per event and emitted
+once to the LED and viewer rooms together; the cost per ball does not grow with viewers.
+
 | `type` | Sent when | LED | Viewers | Admin |
 |---|---|---|---|---|
-| `BALL_RECORDED` | a delivery without wicket/over end | ✔ | – | ✔ |
+| `BALL_RECORDED` | a delivery without wicket/over end | ✔ | ✔ | ✔ |
 | `OVER_COMPLETED` | 6th legal ball of an over | ✔ | ✔ | ✔ |
 | `WICKET` | dismissal or retired out | ✔ | ✔ | ✔ |
 | `INNINGS_COMPLETED` | overs/all out/target/manual end | ✔ | ✔ | ✔ |
 | `MATCH_STARTED` | first innings started | ✔ | ✔ | ✔ |
 | `MATCH_COMPLETED` | result decided (or concluded) | ✔ | ✔ | ✔ |
 | `EVENT_UNDONE` | undo | ✔ | ✔ | ✔ |
-| `MATCH_STATE_UPDATED` | subscribe snapshot; bowler/batter change; setup, confirmation, reopen, status change | ✔ | ✔ (except bowler/batter changes) | ✔ |
+| `MATCH_STATE_UPDATED` | subscribe snapshot; bowler/batter change; setup, confirmation, reopen, status change | ✔ | ✔ | ✔ |
+| `COMMENTARY_UPDATED` | a scorer edited one ball's commentary — `{ matchId, version, entry }`, no new version | – | ✔ | ✔ |
+
+**Viewers receive every event, i.e. every ball** (the LED and viewer rooms get the same envelope).
+A viewer joining mid-over calls `GET /api/live` (state + last 12 commentary entries), subscribes,
+and continues from the snapshot — the match is never replayed. The `useCommentary` hook appends
+`ball` entries and refetches `/matches/:id/commentary` on any version gap or undo.
 
 Effects: `BALL FOUR SIX EXTRA FREE_HIT WICKET OVER_COMPLETED INNINGS_STARTED INNINGS_COMPLETED
 MATCH_STARTED MATCH_COMPLETED BOWLER_CHANGED BATTER_CHANGED STRIKE_CHANGED UNDO`.

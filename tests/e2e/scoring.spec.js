@@ -63,18 +63,20 @@ test.describe.serial('live match', () => {
     await expect(viewer.getByTestId('live-score')).toHaveText('0/0');
   });
 
-  test('LED updates after every ball; viewer waits for the over', async () => {
+  test('LED and viewer both update after every ball, with commentary', async () => {
     const t0 = Date.now();
     await admin.getByRole('button', { name: '4', exact: true }).click();
     await expect(led.getByTestId('led-score')).toHaveText('4/0');
     const ledMs = Date.now() - t0;
-    console.log(`click → LED updated in ${ledMs} ms (includes Playwright overhead)`);
+    await expect(viewer.getByTestId('live-score')).toHaveText('4/0');
+    const viewerMs = Date.now() - t0;
+    console.log(`click → LED ${ledMs} ms, → viewer ${viewerMs} ms (includes Playwright overhead)`);
     await expect(admin.getByTestId('score')).toHaveText('4/0');
+    await expect(viewer.getByTestId('commentary')).toContainText('FOUR!');
     await admin.keyboard.press('1');
     await expect(led.getByTestId('led-score')).toHaveText('5/0');
-    // Viewer policy: no per-ball pushes
-    await viewer.waitForTimeout(800);
-    await expect(viewer.getByTestId('live-score')).toHaveText('0/0');
+    await expect(viewer.getByTestId('live-score')).toHaveText('5/0'); // every ball, not every over
+    await expect(viewer.getByTestId('commentary').locator('li').first()).toContainText('1 run');
 
     // Wide via keyboard (arm W, then 0), then a no-ball with 2 off the bat
     await admin.keyboard.press('w');

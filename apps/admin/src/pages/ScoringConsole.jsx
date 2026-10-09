@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
-import { DISMISSAL_LABELS, fixed } from '@cricket/shared';
+import { DISMISSAL_LABELS, SHOT_TYPES, fixed } from '@cricket/shared';
 import { useApi, useLiveMatch } from '@cricket/client';
 import { api, live } from '../lib/runtime.js';
 import { useScoring } from '../lib/useScoring.js';
 import { useAuth } from '../lib/auth.jsx';
 import { Ball, Button, Card, ConnectionPill, ErrorBox, Field, Modal, Select, Spinner, StatusBadge, useToast } from '../components/ui.jsx';
-import { AdminScorecard, EventLog } from '../components/MatchPanels.jsx';
+import { AdminScorecard, CommentaryPanel, EventLog } from '../components/MatchPanels.jsx';
 
 const pickView = (d) => d.view;
 const EXTRA_LABEL = { wide: 'Wide', noball: 'No-ball', bye: 'Bye', legbye: 'Leg bye' };
@@ -31,6 +31,7 @@ function Console({ view, scoring, tab, setTab, matchId, refresh }) {
   const status = view.match.status;
   const [extra, setExtra] = useState(null);
   const [nbType, setNbType] = useState('bat');
+  const [shot, setShot] = useState(null); // optional, commentary only; cleared after every ball
   const [modal, setModal] = useState(null);
   const inPlay = view.state === 'IN_PROGRESS';
   const canBowl = inPlay && !view.needs?.batter && !view.needs?.bowler;
@@ -47,12 +48,14 @@ function Console({ view, scoring, tab, setTab, matchId, refresh }) {
     const body = { runs };
     if (extra) body.extra = extra;
     if (extra === 'noball') body.noBallRunsType = nbType;
+    if (shot && extra !== 'wide' && extra !== 'bye' && extra !== 'legbye') body.shot = shot;
     const isBoundary = boundary ?? (runs === 4 || runs === 6);
     if (isBoundary && (runs === 4 || (runs === 6 && (!extra || (extra === 'noball' && nbType === 'bat'))))) body.boundary = true;
     send('deliveries', body, extra ? `${EXTRA_LABEL[extra]} ${runs}` : String(runs));
     setExtra(null);
     setNbType('bat');
-  }, [canBowl, locked, extra, nbType, send, toast]);
+    setShot(null);
+  }, [canBowl, locked, extra, nbType, shot, send, toast]);
 
   // Keyboard shortcuts for laptop scorers.
   useEffect(() => {
@@ -95,18 +98,20 @@ function Console({ view, scoring, tab, setTab, matchId, refresh }) {
       <UnsentBanner scoring={scoring} />
 
       <div className="mb-3 flex gap-1 rounded-lg bg-slate-200/70 p-1 text-sm">
-        {[['score', 'Score'], ['scorecard', 'Scorecard'], ['log', 'Event log']].map(([v, l]) => (
+        {[['score', 'Score'], ['scorecard', 'Scorecard'], ['commentary', 'Commentary'], ['log', 'Event log']].map(([v, l]) => (
           <button key={v} type="button" onClick={() => setTab(v)} className={`flex-1 rounded-md px-3 py-1.5 font-medium ${tab === v ? 'bg-white shadow-sm' : 'text-slate-600'}`}>{l}</button>
         ))}
       </div>
 
       {tab === 'scorecard' && <AdminScorecard matchId={matchId} version={view.version} />}
       {tab === 'log' && <EventLog matchId={matchId} version={view.version} />}
+      {tab === 'commentary' && <CommentaryPanel matchId={matchId} />}
       {tab === 'score' && (
         <div className="grid gap-3 lg:grid-cols-[1fr_420px]">
           <div className="space-y-3">
             <Scoreboard view={view} />
             {c && <CreasePanel view={view} onSwap={() => !locked && send('swap-strike', {}, 'Swap strike')} locked={locked} />}
+            {c && <CommentaryPanel matchId={matchId} compact />}
           </div>
           <div className="space-y-3">
             {view.state === 'COMPLETED' ? <ResultPanel view={view} matchId={matchId} onUndo={() => setModal('undo')} locked={locked} refresh={refresh} />
@@ -115,7 +120,7 @@ function Console({ view, scoring, tab, setTab, matchId, refresh }) {
                   : view.needs?.bowler ? <BowlerPicker view={view} send={send} locked={locked} />
                     : (
                       <Pad
-                        view={view} extra={extra} setExtra={setExtra} nbType={nbType} setNbType={setNbType}
+                        view={view} extra={extra} setExtra={setExtra} nbType={nbType} setNbType={setNbType} shot={shot} setShot={setShot}
                         deliver={deliver} locked={locked} pending={scoring.pending}
                         onWicket={() => setModal('wicket')} onUndo={() => setModal('undo')} onMore={() => setModal('more')}
                       />
@@ -161,12 +166,15 @@ function Scoreboard({ view }) {
       </Card>
     );
   }
-  const first = view.innings[0];
+  const first = c.target !== null ? view.innings[c.inningsNumber - 2] : null;
+  const breakText = view.superOver && c.target !== null
+    ? `Scores level — Super Over${view.superOver > 1 ? ` ${view.superOver}` : ''} next`
+    : `Innings complete — target ${c.runs + 1}`;
   return (
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-end gap-x-6 gap-y-2 p-4">
         <div>
-          <p className="text-sm font-medium text-slate-500">{teams[c.battingTeam]?.name} · Innings {c.inningsNumber}</p>
+          <p className="text-sm font-medium text-slate-500">{teams[c.battingTeam]?.name} · {c.superOver ? `Super Over${c.superOver > 1 ? ` ${c.superOver}` : ''}` : `Innings ${c.inningsNumber}`}</p>
           <p data-testid="score" className="tnum text-5xl font-black tracking-tight">{c.runs}/{c.wickets}</p>
         </div>
         <div className="pb-1">
@@ -184,11 +192,16 @@ function Scoreboard({ view }) {
           <span>Target <b className="tnum">{c.target}</b></span>
           <span>Need <b className="tnum">{c.runsNeeded}</b> off <b className="tnum">{c.ballsRemaining}</b></span>
           <span>RRR <b className="tnum">{fixed(c.rrr)}</b></span>
-          <span className="text-slate-500">{teams[first.battingTeam]?.shortName} {first.runs}/{first.wickets} ({first.overs})</span>
+          {first && <span className="text-slate-500">{teams[first.battingTeam]?.shortName} {first.runs}/{first.wickets} ({first.overs})</span>}
         </div>
       )}
       {c.freeHit && view.state === 'IN_PROGRESS' && <div className="bg-amber-500 py-1 text-center text-xs font-black uppercase tracking-widest text-white">Free hit</div>}
-      {view.state === 'INNINGS_BREAK' && <div className="bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-900">Innings complete — target {c.runs + 1}</div>}
+      {view.state === 'INNINGS_BREAK' && <div className="bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-900">{breakText}</div>}
+      {view.bonus?.conditions?.length > 0 && (
+        <div className="border-t border-slate-100 bg-emerald-50 px-4 py-2 text-xs text-emerald-900">
+          <b>Bonus point (+{view.bonus.points}):</b> {view.bonus.conditions.map((x) => `${x.status === 'achieved' ? '✓ ' : ''}${x.text}`).join(' · ')}
+        </div>
+      )}
       <div className="border-t border-slate-100 px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="w-16 text-xs font-medium text-slate-500">Over {c.thisOver.over}</span>
@@ -231,7 +244,9 @@ function CreasePanel({ view, onSwap, locked }) {
   );
 }
 
-function Pad({ view, extra, setExtra, nbType, setNbType, deliver, locked, pending, onWicket, onUndo, onMore }) {
+const SHOT_KEYS = ['drive', 'flick', 'pull', 'cut', 'sweep', 'lofted', 'defence', 'edge'];
+
+function Pad({ view, extra, setExtra, nbType, setNbType, shot, setShot, deliver, locked, pending, onWicket, onUndo, onMore }) {
   const runBtn = 'h-16 rounded-xl text-2xl font-black shadow-sm ring-1 transition active:scale-95 disabled:opacity-40';
   const armed = (x) => extra === x;
   return (
@@ -261,6 +276,18 @@ function Pad({ view, extra, setExtra, nbType, setNbType, deliver, locked, pendin
           <span className="px-2 font-medium text-amber-900">Runs off:</span>
           {[['bat', 'Bat'], ['bye', 'Byes'], ['legbye', 'Leg byes']].map(([k, l]) => (
             <button key={k} type="button" onClick={() => setNbType(k)} className={`flex-1 rounded-md py-1.5 font-semibold ${nbType === k ? 'bg-amber-500 text-white' : 'text-amber-900'}`}>{l}</button>
+          ))}
+        </div>
+      )}
+
+      {extra !== 'wide' && extra !== 'bye' && extra !== 'legbye' && (
+        <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px]" aria-label="Shot (optional)">
+          <span className="mr-1 font-medium text-slate-400">Shot</span>
+          {SHOT_KEYS.map((k) => (
+            <button key={k} type="button" onClick={() => setShot(shot === k ? null : k)}
+              className={`rounded-full px-2 py-0.5 font-semibold ring-1 ${shot === k ? 'bg-teal-700 text-white ring-teal-700' : 'bg-white text-slate-600 ring-slate-200 hover:ring-slate-400'}`}>
+              {SHOT_TYPES[k]}
+            </button>
           ))}
         </div>
       )}
@@ -327,16 +354,19 @@ function StartInnings({ view, send, locked }) {
   const [form, setForm] = useState({ strikerId: s.battingXI[0]?.id, nonStrikerId: s.battingXI[1]?.id, bowlerId: '' });
   useEffect(() => { setForm({ strikerId: s.battingXI[0]?.id, nonStrikerId: s.battingXI[1]?.id, bowlerId: '' }); }, [s.battingTeam]); // eslint-disable-line react-hooks/exhaustive-deps
   const n = view.innings.length + 1;
+  const superOver = n > 2 ? Math.ceil((n - 2) / 2) : null;
+  const title = superOver ? `Super Over${superOver > 1 ? ` ${superOver}` : ''} (innings ${n % 2 ? 1 : 2} of 2)` : `innings ${n}`;
   const valid = form.strikerId && form.nonStrikerId && form.bowlerId && form.strikerId !== form.nonStrikerId;
   return (
     <Card className="space-y-3 p-4">
-      <h2 className="font-semibold">Start innings {n}: {view.teams[s.battingTeam]?.name} batting</h2>
-      {n === 2 && <p className="rounded-lg bg-slate-50 p-2 text-sm">Target: <b>{view.innings[0].runs + 1}</b> from {view.rules.oversPerInnings} overs</p>}
+      <h2 className="font-semibold">Start {title}: {view.teams[s.battingTeam]?.name} batting</h2>
+      {superOver && n % 2 === 1 && <p className="rounded-lg bg-violet-50 p-2 text-sm text-violet-900">Scores are level. Each side faces one over and is out after losing two wickets. {view.teams[s.battingTeam]?.name} batted second, so they bat first.</p>}
+      {n % 2 === 0 && <p className="rounded-lg bg-slate-50 p-2 text-sm">Target: <b>{view.innings[n - 2].runs + 1}</b> from {superOver ? 1 : view.rules.oversPerInnings} over{superOver ? '' : 's'}</p>}
       <Field label="Striker"><Select value={form.strikerId} onChange={(e) => setForm({ ...form, strikerId: e.target.value })}>{s.battingXI.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
       <Field label="Non-striker"><Select value={form.nonStrikerId} onChange={(e) => setForm({ ...form, nonStrikerId: e.target.value })}>{s.battingXI.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
       <Field label="Opening bowler"><Select value={form.bowlerId} onChange={(e) => setForm({ ...form, bowlerId: e.target.value })}><option value="">Select…</option>{s.bowlingXI.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
       {form.strikerId === form.nonStrikerId && <p className="text-sm text-red-600">Choose two different openers.</p>}
-      <Button className="w-full" size="py-3 text-base" disabled={!valid || locked} onClick={() => send('innings/start', form, `Start innings ${n}`)}>Start innings</Button>
+      <Button className="w-full" size="py-3 text-base" disabled={!valid || locked} onClick={() => send('innings/start', form, `Start ${title}`)}>Start innings</Button>
     </Card>
   );
 }

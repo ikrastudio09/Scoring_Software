@@ -100,6 +100,25 @@ export const SOCKET_EVENTS = Object.freeze({
   MATCH_STATUS_CHANGED: 'MATCH_STATUS_CHANGED',
   POINTS_TABLE_UPDATED: 'POINTS_TABLE_UPDATED',
   STATISTICS_UPDATED: 'STATISTICS_UPDATED',
+  // A scorer edited the commentary of one ball. Not a scoring change: carries no new version.
+  COMMENTARY_UPDATED: 'COMMENTARY_UPDATED',
+});
+
+// Optional shot description a scorer may attach to a delivery (commentary only, never scoring).
+export const SHOT_TYPES = Object.freeze({
+  drive: 'Drive',
+  cover_drive: 'Cover drive',
+  straight_drive: 'Straight drive',
+  flick: 'Flick',
+  pull: 'Pull',
+  hook: 'Hook',
+  cut: 'Cut',
+  sweep: 'Sweep',
+  reverse_sweep: 'Reverse sweep',
+  lofted: 'Lofted shot',
+  edge: 'Edge',
+  defence: 'Defence',
+  leave: 'Leave',
 });
 
 // The single socket message name. Payload is the envelope {type, matchId, version, ...}.
@@ -138,4 +157,7 @@ export const ERROR_CODES = Object.freeze({
   MATCH_LOCKED: 'MATCH_LOCKED',
   INVALID_TRANSITION: 'INVALID_TRANSITION',
   NOTHING_TO_UNDO: 'NOTHING_TO_UNDO',
+  // Only one match may be in play at a time (business rule, enforced server-side).
+  ANOTHER_MATCH_ACTIVE: 'ANOTHER_MATCH_ACTIVE',
+  IMPORT_INVALID: 'IMPORT_INVALID',
 });

@@ -8,7 +8,7 @@ afterAll(async () => { await ctx?.close(); });
 const types = (c) => c.received.map((e) => e.type);
 
 describe('realtime fan-out', () => {
-  it('LED receives every ball; viewers only overs, wickets and major events', async () => {
+  it('LED and viewers receive every ball, in order, with a compact ball summary', async () => {
     const { id, A, B } = await seedMatch(ctx, { overs: 2, maxOversPerBowler: 1 });
     const led = socketClient(ctx, { matchId: id, channel: 'led' });
     const viewer = socketClient(ctx, { matchId: id, channel: 'viewer' });
@@ -31,18 +31,28 @@ describe('realtime fan-out', () => {
 
     await led.waitFor((e) => e.version === 8);
     await viewer.waitFor((e) => e.version === 8);
-    const ledBalls = led.received.filter((e) => e.version > 0).map((e) => e.version);
-    expect(ledBalls).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-    expect(types(led)).toContain('BALL_RECORDED');
+    const versions = (c) => c.received.filter((e) => e.version > 0).map((e) => e.version);
+    expect(versions(led)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(versions(viewer)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     const viewerEvents = viewer.received.filter((e) => e.version > 0);
-    expect(viewerEvents.map((e) => [e.version, e.type])).toEqual([[1, 'MATCH_STARTED'], [5, 'WICKET'], [8, 'OVER_COMPLETED']]);
-    // payload contract
+    expect(viewerEvents.map((e) => e.type)).toEqual([
+      'MATCH_STARTED', 'BALL_RECORDED', 'BALL_RECORDED', 'BALL_RECORDED', 'WICKET', 'MATCH_STATE_UPDATED', 'BALL_RECORDED', 'OVER_COMPLETED',
+    ]);
+
+    // every delivery carries a compact ball summary with local commentary
+    const four = viewerEvents.find((e) => e.version === 4);
+    expect(four.ball).toMatchObject({ seq: 4, innings: 1, over: '0.3', kind: 'four', label: '4', runs: 4, score: '7/0' });
+    expect(four.ball.text).toMatch(/^B Player 1 to A Player 2, FOUR!/) // A2 took strike after the single;
+    expect(viewerEvents.find((e) => e.version === 5).ball).toMatchObject({ kind: 'wicket', score: '7/1' });
+    expect(viewerEvents.find((e) => e.version === 6).ball).toBeUndefined(); // new batter: not a delivery
     const over = viewerEvents.at(-1);
     expect(over).toMatchObject({ matchId: id, eventId: `${id}:8`, effects: expect.arrayContaining(['OVER_COMPLETED']) });
+    expect(over.ball.endOfOver).toMatchObject({ over: 1, runs: 8, wickets: 1 });
     expect(over.live.current).toMatchObject({ runs: 8, wickets: 1, overs: '1.0' });
     expect(typeof over.ts).toBe('number');
+    // payloads stay small (no database documents)
+    expect(JSON.stringify(over).length).toBeLessThan(6000);
 
-    // undo is always pushed to viewers (a correction may change what they saw)
     await s.undo();
     const undo = await viewer.waitFor((e) => e.type === 'EVENT_UNDONE');
     expect(undo.version).toBe(9);

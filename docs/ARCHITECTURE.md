@@ -2,6 +2,7 @@
 
 One deployment = one tournament. One Node.js process, one MongoDB database, three
 static web apps (admin, viewer, LED) and one Android wrapper around the viewer.
+**At most one match is live at a time** (enforced by the server, see "One active match").
 
 ```
                        ┌──────────────────────────── Node.js process ─────────────────────────────┐
@@ -60,7 +61,9 @@ data/             tournament data files (clone point for a new tournament)
 | `matchevents` (one document per scoring command) | **Source of truth** | Append-only. Undo marks an event `undone` and appends an `UNDO` event. Never deleted. |
 | `matches` setup (teams, toss, XIs, rules snapshot) | **Source of truth** | Rules are copied into the match at creation so later tournament edits never change a played match. |
 | `matches.state` / `matches.summary` / `matches.result` | Derived cache | Rebuilt by replaying events. Written after each event. |
-| `playermatchstats` | Derived | Built on result confirmation; rebuildable from all events (`npm run stats:rebuild`). |
+| `playermatchstats` | Derived | Built on result confirmation; rebuildable from all events (`npm run stats:rebuild`). Includes the per-match facts the MVP formula needs (`context`). |
+| `commentaryedits` | Source of truth (display only) | Scorer rewording of one ball, keyed (match, seq). Never read by scoring. |
+| `players` / `teams` snapshot | Source of truth (after import) | Imported once from the auction system; `playerID` / `teamID` are the canonical keys. No phone numbers or ages are stored. |
 | Points table, leaderboards | Derived | Computed from confirmed matches + `playermatchstats`, cached in memory, invalidated on confirmation. |
 
 ## Scoring write path (the hot path)
@@ -76,13 +79,55 @@ POST /api/matches/:id/deliveries {clientEventId, expectedVersion, ...}
     unique indexes (matchId,seq) and (matchId,clientEventId) make double-commits impossible
  7. update match snapshot (state, status, summary) — failure is logged, not fatal; replay fixes it
  8. respond to scorer with the live view
- 9. broadcast (fire-and-forget): LED every event; viewers on over/wicket/innings/match/undo
+ 9. broadcast (fire-and-forget): ONE envelope per event, emitted once to the LED and viewer
+   rooms together (every ball), plus the scorer view to the admin room
 10. on match completion confirmation → stats + points recompute in background
 ```
 
 MongoDB runs standalone (no transactions needed): the single event insert is the atomic commit.
 Everything after step 6 is derived and recoverable. Statistics and broadcasting can fail
 without affecting scoring (priority order from the spec §55).
+
+## One active match
+
+`services/active.js`. In play = `LIVE | INNINGS_BREAK | SECOND_INNINGS`; a match whose last ball
+has been bowled but whose result is not confirmed is still the *active* match (viewers keep
+seeing it; points and stats are not final). Rules, enforced in the scoring pipeline before the
+event is committed:
+
+- A command that would move a match **into** play (the first ball, or an undo that reopens a
+  finished match) runs under a process-wide activation lock and is rejected with
+  `409 ANOTHER_MATCH_ACTIVE` if any other match is in play (checked in memory and in MongoDB).
+- Starting a match additionally requires every finished match to be confirmed.
+- Ordinary deliveries never take the global lock (no cost on the hot path).
+- `GET /api/live` answers "what is live now?" with the state + recent commentary.
+
+The lock is in-process, which is correct for the single-process deployment (Socket.IO without an
+adapter already requires one process).
+
+## Commentary
+
+`engine/commentary.js` is a pure function of the match state: the same events always produce the
+same text (template variety is chosen from the ball's sequence number). No AI, no network.
+Optional `shot` on a delivery (drive, pull, …) only changes wording. Scorer edits are stored in
+`commentaryedits` and replace the sentence; the factual score line is never editable. A failure
+while generating commentary drops the text from the broadcast and never the update itself.
+
+## MVP / impact score
+
+`engine/impact.js`. `impactContext(state)` stores per-player match facts (match scoring rate,
+top-order wickets, won chase / defence) with the derived statistics; `scoreImpact(row, weights)`
+applies the weights at read time, so changing weights (Settings → MVP impact weights) needs no
+rebuild. Formula and defaults are documented in the file header. Auction value is never an input;
+"value for money" (impact per 100k auction points) is a separate list.
+
+## Auction import
+
+`services/auctionImport.js`: `validateAuctionImport` (pure) → `planAuctionImport` (compares with
+the database: create / update / link-by-name / unchanged; refuses moving a player who has already
+played) → `applyAuctionImport`. The admin previews, then confirms; the commit re-validates and
+must match the previewed data hash. Files are parsed in the admin app (JSON, CSV, XLSX); the
+server validates every value.
 
 ## Engine model
 
@@ -132,8 +177,8 @@ never a replay of events.
 
 | Event | LED | Viewers | Admin |
 |---|---|---|---|
-| `BALL_RECORDED` | ✔ every ball | – | ✔ |
-| `OVER_COMPLETED`, `WICKET`, `INNINGS_COMPLETED`, `MATCH_STARTED`, `MATCH_COMPLETED`, `EVENT_UNDONE`, `MATCH_STATE_UPDATED` | ✔ | ✔ | ✔ |
+| `BALL_RECORDED`, `OVER_COMPLETED`, `WICKET`, `INNINGS_COMPLETED`, `MATCH_STARTED`, `MATCH_COMPLETED`, `EVENT_UNDONE`, `MATCH_STATE_UPDATED` | ✔ every event | ✔ every event | ✔ |
+| `COMMENTARY_UPDATED` | – | ✔ | ✔ |
 | `POINTS_TABLE_UPDATED`, `STATISTICS_UPDATED`, `MATCH_STATUS_CHANGED` | – | ✔ (tournament room) | ✔ |
 
 Full payload docs: [REALTIME_EVENTS.md](REALTIME_EVENTS.md).

@@ -1,9 +1,11 @@
 // Read projections of the engine state. Pure functions; `meta` supplies display names:
-// meta = { matchId, teams: { [id]: { name, shortName, color } }, players: { [id]: { name } } }
+// meta = { matchId, teams: { [id]: { name, shortName, color } }, players: { [id]: { name } },
+//         bonus: normalised bonus-point rules, or null when they do not apply to this match }
 
 import { formatOvers, runRate, strikeRate, economy, RESULT_TYPES } from '@cricket/shared';
-import { MATCH_STATE, currentInnings, bowlerUnavailableReason } from './engine.js';
+import { MATCH_STATE, currentInnings, bowlerUnavailableReason, nextInningsTeams } from './engine.js';
 import { normalizeRules } from './rules.js';
+import { bonusStatus } from './bonus.js';
 
 const name = (meta, id) => (id ? meta.players[id]?.name ?? 'Unknown' : null);
 const teamName = (meta, id) => meta.teams[id]?.name ?? 'Unknown';
@@ -12,6 +14,7 @@ export function resultText(result, meta) {
   if (!result) return null;
   switch (result.type) {
     case RESULT_TYPES.WIN:
+      if (result.superOver) return `Match tied (${teamName(meta, result.winner)} won the Super Over)`;
       if (result.marginRuns !== undefined) {
         return `${teamName(meta, result.winner)} won by ${result.marginRuns} run${result.marginRuns === 1 ? '' : 's'}`;
       }
@@ -44,9 +47,20 @@ export function dismissalText(d, meta) {
   }
 }
 
+/** The Super Over being played or about to start (1, 2, ...), or null during the main match. */
+function superOverNumber(state) {
+  const n = state.status === MATCH_STATE.INNINGS_BREAK ? state.innings.length + 1 : state.innings.length;
+  return n > 2 ? Math.ceil((n - 2) / 2) : null;
+}
+
+function bonusView(state, bpo, meta) {
+  return bonusStatus(state, meta.bonus, bpo, (id) => meta.teams[id]?.shortName || teamName(meta, id));
+}
+
 function inningsSummary(inn, bpo) {
   return {
     number: inn.number,
+    superOver: inn.superOver ?? null,
     battingTeam: inn.battingTeam,
     bowlingTeam: inn.bowlingTeam,
     runs: inn.runs,
@@ -93,6 +107,8 @@ export function toLiveView(state, setup, meta) {
     current: null,
     lastEvent: state.lastEvent,
     result: state.result ? { ...state.result, text: resultText(state.result, meta) } : null,
+    superOver: superOverNumber(state),
+    bonus: bonusView(state, bpo, meta),
   };
   if (!inn) return view;
 
@@ -107,6 +123,7 @@ export function toLiveView(state, setup, meta) {
 
   view.current = {
     inningsNumber: inn.number,
+    superOver: inn.superOver ?? null,
     battingTeam: inn.battingTeam,
     bowlingTeam: inn.bowlingTeam,
     status: inn.status,
@@ -114,7 +131,7 @@ export function toLiveView(state, setup, meta) {
     wickets: inn.wickets,
     legalBalls: inn.legalBalls,
     overs: formatOvers(inn.legalBalls, bpo),
-    maxOvers: rules.oversPerInnings,
+    maxOvers: inn.maxBalls / bpo,
     extras: inn.extras.total,
     crr: runRate(inn.runs, inn.legalBalls, bpo),
     target: inn.target,
@@ -151,8 +168,8 @@ export function toScorerView(state, setup, meta) {
   const view = toLiveView(state, setup, meta);
   const rules = normalizeRules(setup.rules);
   const inn = currentInnings(state);
-  const nextBatting = state.status === MATCH_STATE.NOT_STARTED ? setup.battingFirst
-    : state.status === MATCH_STATE.INNINGS_BREAK ? setup.bowlingFirst : inn?.battingTeam;
+  const between = state.status === MATCH_STATE.NOT_STARTED || state.status === MATCH_STATE.INNINGS_BREAK;
+  const nextBatting = between ? nextInningsTeams(state, setup).battingTeam : inn?.battingTeam;
   const nextBowling = nextBatting === setup.battingFirst ? setup.bowlingFirst : setup.battingFirst;
   const live = inn && inn.status === 'IN_PROGRESS' ? inn : null;
   const opt = (id) => ({ id, name: name(meta, id) });
@@ -197,6 +214,8 @@ export function toScorecard(state, setup, meta) {
     version: state.version,
     state: state.status,
     result: state.result ? { ...state.result, text: resultText(state.result, meta) } : null,
+    superOver: superOverNumber(state),
+    bonus: bonusView(state, bpo, meta),
     innings: state.innings.map((inn) => {
       let cumulative = 0;
       return {
@@ -245,14 +264,21 @@ export function toScorecard(state, setup, meta) {
   };
 }
 
-/** Compact match summary stored on the match document for lists / results pages. */
+/**
+ * Compact match summary stored on the match document for lists / results pages.
+ * `innings` holds the two main innings only (NRR and team records use them); Super Overs are
+ * listed separately.
+ */
 export function toSummary(state, setup, meta) {
   const bpo = normalizeRules(setup.rules).ballsPerOver;
+  const line = (i) => ({
+    team: i.battingTeam, runs: i.runs, wickets: i.wickets, legalBalls: i.legalBalls,
+    overs: formatOvers(i.legalBalls, bpo), maxBalls: i.maxBalls, allOut: i.endReason === 'all_out',
+  });
+  const superOvers = state.innings.filter((i) => i.superOver).map((i) => ({ ...line(i), superOver: i.superOver }));
   return {
-    innings: state.innings.map((i) => ({
-      team: i.battingTeam, runs: i.runs, wickets: i.wickets, legalBalls: i.legalBalls,
-      overs: formatOvers(i.legalBalls, bpo), maxBalls: i.maxBalls, allOut: i.endReason === 'all_out',
-    })),
+    innings: state.innings.filter((i) => !i.superOver).map(line),
+    ...(superOvers.length ? { superOvers } : {}),
     resultText: resultText(state.result, meta),
   };
 }

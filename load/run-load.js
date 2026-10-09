@@ -1,11 +1,11 @@
 // Load & latency test against a REAL server process.
 //
-//   node load/run-load.js [--viewers 500] [--matches 4] [--ballMs 250] [--balls 120] [--httpConcurrency 50] [--httpRps 0]
+//   node load/run-load.js [--viewers 500] [--matches 1] [--ballMs 250] [--balls 120] [--httpConcurrency 50] [--httpRps 0]
 //
 // Boots the server as a child process on a throwaway database (cricket_load), seeds the sample
 // tournament, then simultaneously:
 //   * connects N viewer sockets + 1 LED socket per match (+ tournament room subscriptions)
-//   * runs M matches in parallel, each scorer recording a command every --ballMs via the REST API
+//   * runs the ONE live match (the server allows only one in play), the scorer recording a command every --ballMs via the REST API
 //     (realistic is ~1 ball / 30 s — this is >100× faster than real play)
 //   * hammers public GET endpoints with --httpConcurrency parallel clients
 //   * finishes with a reconnect storm (all viewers drop and reconnect at once)
@@ -21,7 +21,7 @@ import { nextCommand, rng } from '../server/scripts/lib/simulate.js';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (name, d) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? Number(process.argv[i + 1]) : d; };
 const VIEWERS = arg('viewers', 500);
-const MATCHES = arg('matches', 4);
+const MATCHES = arg('matches', 1); // the server enforces one live match; >1 demonstrates the rejection
 const BALL_MS = arg('ballMs', 250);
 const MAX_COMMANDS = arg('balls', 120);
 const HTTP_CONC = arg('httpConcurrency', 50);
@@ -98,6 +98,7 @@ try {
   const viewerLat = [];
   const viewerEventsPerSocket = [];
   let socketErrors = 0;
+  let maxBallEnvelope = 0;
   const connectStart = performance.now();
   const mkSocket = (channel, matchId, onEnv) => new Promise((resolve) => {
     const s = io(BASE, { transports: ['websocket'], auth: { client: channel }, reconnectionDelay: 200, reconnectionDelayMax: 2000 });
@@ -115,6 +116,7 @@ try {
       const idx = i + k;
       viewerEventsPerSocket[idx] = 0;
       return mkSocket('viewer', ids[idx % ids.length], (e) => {
+        if (e.ball && !maxBallEnvelope) maxBallEnvelope = JSON.stringify(e).length;
         const t = sendTimes.get(`${e.matchId}:${e.version}`);
         if (t && e.effects?.length) { viewerLat.push(performance.now() - t); viewerEventsPerSocket[idx]++; }
       });
@@ -127,7 +129,7 @@ try {
   let stopHttp = false;
   const httpLat = [];
   let httpErrors = 0;
-  const paths = ['/home', '/points-table', '/stats/leaderboards', '/matches', ...ids.map((id) => `/matches/${id}/live`), ...ids.map((id) => `/matches/${id}/scorecard`)];
+  const paths = ['/home', '/live', '/points-table', '/stats/leaderboards', '/stats/mvp', '/matches', ...ids.map((id) => `/matches/${id}/commentary`), ...ids.map((id) => `/matches/${id}/live`), ...ids.map((id) => `/matches/${id}/scorecard`)];
   const httpWorker = async (w) => {
     let i = w;
     while (!stopHttp) {
@@ -143,6 +145,7 @@ try {
   const cmdLat = [];
   let cmdErrors = 0;
   let commands = 0;
+  let rejectedSecondMatch = 0;
   const scorer = async (matchId, seed) => {
     const r = rng(seed);
     let view = (await api('GET', `/matches/${matchId}/scorer`, null, token)).view;
@@ -158,6 +161,7 @@ try {
         commands++;
       } catch (e) {
         cmdErrors++;
+        if (e.data?.error?.code === 'ANOTHER_MATCH_ACTIVE') { rejectedSecondMatch++; return; }
         view = (await api('GET', `/matches/${matchId}/scorer`, null, token)).view;
       }
       await sleep(BALL_MS);
@@ -191,10 +195,14 @@ try {
   };
   report.led = { updatesReceived: ledLat.length, expected: commands, sendToLedMs: stats(ledLat) };
   const viewerMsgs = viewerEventsPerSocket.reduce((a, b) => a + b, 0);
+  const minPerViewer = Math.min(...viewerEventsPerSocket);
   report.viewers = {
     deliveries: viewerLat.length, avgMessagesPerViewer: +(viewerMsgs / VIEWERS).toFixed(1),
-    sendToViewerMs: stats(viewerLat), note: 'viewers only receive overs, wickets and innings/match events',
+    minMessagesPerViewer: minPerViewer, expectedPerViewer: commands,
+    everyViewerGotEveryUpdate: MATCHES === 1 ? minPerViewer === commands : null,
+    sendToViewerMs: stats(viewerLat), ballEnvelopeBytes: maxBallEnvelope,
   };
+  report.singleActiveMatch = { matchesAttempted: ids.length, rejectedSecondMatchStarts: rejectedSecondMatch };
   report.http = { requests: httpLat.length, errors: httpErrors, rps: +(httpLat.length / scoringSecs).toFixed(0), latencyMs: stats(httpLat) };
   report.server = {
     memoryMb: { before: metricsBefore.memoryMb, after: metricsAfter.memoryMb },

@@ -9,7 +9,9 @@ import { createUser, login, publicUser } from '../services/auth.js';
 import { getTournament, publicTournament } from '../services/tournament.js';
 import { listMatches } from '../services/matches.js';
 import { getRuntime, liveView, cachedRuntimes } from '../services/runtime.js';
-import { getLeaderboards, rebuildAllStats } from '../services/stats.js';
+import { getActiveMatch } from '../services/active.js';
+import { getCommentary } from '../services/commentary.js';
+import { getLeaderboards, getMvpTable, rebuildAllStats } from '../services/stats.js';
 import { getPointsTable } from '../services/points.js';
 import { reconcileMatches } from '../services/scoring.js';
 import { audit } from '../services/audit.js';
@@ -17,6 +19,12 @@ import { dbState, pingDb } from '../db.js';
 import { metrics } from '../utils/metrics.js';
 import { logger } from '../utils/logger.js';
 import { ttlCache } from '../utils/ttlCache.js';
+import { applyAuctionImport, hashImport, planAuctionImport, validateAuctionImport } from '../services/auctionImport.js';
+import { invalidateRuntime as invalidateAllRuntimes } from '../services/runtime.js';
+import { invalidatePoints } from '../services/points.js';
+import { invalidateStats } from '../services/stats.js';
+import { AppError } from '../utils/errors.js';
+import { ERROR_CODES } from '@cricket/shared';
 
 const homeCache = ttlCache(2000);
 
@@ -72,8 +80,26 @@ async function buildHome() {
     },
   };
 }
+// The one active match (spec §15, §53): current state + recent commentary in a single request.
+// Viewers call this on open and after reconnecting, then follow socket events.
+publicRouter.get('/live', async (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const active = await getActiveMatch();
+  if (!active) return res.json({ live: false });
+  const rt = await getRuntime(active.id);
+  const { entries } = await getCommentary(active.id, { limit: 12 });
+  return res.json({
+    live: true,
+    inPlay: active.inPlay,
+    matchId: active.id,
+    version: rt.lastSeq,
+    view: liveView(rt),
+    commentary: entries,
+  });
+});
 publicRouter.get('/points-table', async (_req, res) => { res.json(await getPointsTable()); });
 publicRouter.get('/stats/leaderboards', async (_req, res) => { res.json(await getLeaderboards()); });
+publicRouter.get('/stats/mvp', async (_req, res) => { res.json(await getMvpTable()); });
 
 // ── admin tools ──
 adminRouter.get('/audit', requireAdmin, async (req, res) => {
@@ -92,6 +118,45 @@ adminRouter.post('/reconcile', requireAdmin, async (req, res) => {
   await audit(req.user, 'matches.reconcile', 'match', null, out);
   res.json(out);
 });
+// ── auction / registration import: validate → preview → confirm (spec §10–§12) ──
+async function importReport(body) {
+  const report = validateAuctionImport(body);
+  const plan = report.ok ? await planAuctionImport(report.data) : null;
+  const errors = [...report.errors, ...(plan?.errors || [])];
+  return {
+    ok: errors.length === 0,
+    hash: hashImport(report.data),
+    checks: report.checks,
+    errors,
+    warnings: [...report.warnings, ...(plan?.warnings || [])],
+    info: report.info,
+    counts: plan?.counts || null,
+    teams: plan ? plan.teams.map((t) => ({
+      teamID: t.teamID, name: t.name, action: t.action,
+      players: plan.players.filter((p) => p.teamID === t.teamID)
+        .map((p) => ({ playerID: p.playerID, name: p.name, playerType: p.playerType, soldPoints: p.soldPoints, playerPool: p.playerPool, action: p.action })),
+    })) : [],
+    plan,
+  };
+}
+adminRouter.post('/import/auction/preview', requireAdmin, validate(v.auctionImportSchema), async (req, res) => {
+  const { plan, ...report } = await importReport(req.body);
+  res.json(report);
+});
+adminRouter.post('/import/auction/commit', requireAdmin, validate(v.auctionImportSchema), async (req, res) => {
+  const { plan, ...report } = await importReport(req.body);
+  if (!report.ok) throw new AppError(422, ERROR_CODES.IMPORT_INVALID, 'The import has errors and was not applied.', report);
+  if (req.body.hash && req.body.hash !== report.hash) {
+    throw new AppError(409, ERROR_CODES.IMPORT_INVALID, 'The data changed since the preview. Preview it again before confirming.');
+  }
+  const result = await applyAuctionImport(plan);
+  invalidateAllRuntimes();
+  invalidatePoints();
+  invalidateStats();
+  await audit(req.user, 'import.auction', 'tournament', null, { hash: report.hash, ...result });
+  res.json({ ok: true, hash: report.hash, result });
+});
+
 adminRouter.get('/metrics', requireAdmin, async (_req, res) => {
   res.json(metrics.snapshot({
     db: { state: dbState() },
@@ -114,5 +179,6 @@ healthRouter.get('/health', async (_req, res) => {
     sockets: m.sockets.connected,
     memoryMb: m.memoryMb.rss,
     inPlayMatches: await Match.countDocuments({ status: { $in: IN_PLAY_STATUSES } }).catch(() => null),
+    activeMatchId: (await getActiveMatch().catch(() => null))?.id ?? null,
   });
 });

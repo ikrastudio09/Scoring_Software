@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router';
 import { useApi, useLiveMatch } from '@cricket/client';
 import { api, live } from '../lib/runtime.js';
 import LivePanel from '../components/LivePanel.jsx';
+import CommentaryFeed from '../components/Commentary.jsx';
+import MatchMvp from '../components/MatchMvp.jsx';
 import Scorecard, { OversTable } from '../components/Scorecard.jsx';
 import { Card, ErrorState, PlayerLink, Spinner, StatusBadge, Tabs, TeamLogo } from '../components/ui.jsx';
 import { fmtDateTime, STAGE_LABEL } from '../lib/format.js';
@@ -14,10 +16,17 @@ export default function MatchPage() {
   const { live: view, version, lastEnvelope } = useLiveMatch({ api, live, matchId: id, channel: 'viewer' });
   const sc = useApi(api, tab === 'scorecard' || tab === 'overs' ? `/matches/${id}/scorecard` : null, [id, tab]);
 
-  // Keep the scorecard in step with the live version (updates arrive per over / wicket).
+  // Keep the scorecard in step with the live version (an update arrives after every ball).
   useEffect(() => { if (version && (tab === 'scorecard' || tab === 'overs')) sc.reload(); }, [version]); // eslint-disable-line react-hooks/exhaustive-deps
   // Refresh match info (result, player of the match) when the status changes.
   useEffect(() => { if (lastEnvelope?.type === 'MATCH_COMPLETED' || lastEnvelope?.type === 'MATCH_STATE_UPDATED') reload(); }, [lastEnvelope?.type, lastEnvelope?.ts]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The MVP race refreshes at overs, wickets and innings/match end — not after every ball — so
+  // hundreds of viewers on that tab do not each refetch after every delivery.
+  const mvpVersion = useRef(null);
+  if (lastEnvelope && (mvpVersion.current === null || ['OVER_COMPLETED', 'WICKET', 'INNINGS_COMPLETED', 'MATCH_COMPLETED', 'EVENT_UNDONE'].includes(lastEnvelope.type))) {
+    mvpVersion.current = lastEnvelope.version;
+  }
 
   if (error && !data) return <ErrorState error={error} onRetry={reload} />;
   if (!data) return <Spinner />;
@@ -52,9 +61,15 @@ export default function MatchPage() {
         )}
       </Card>
 
-      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'live', label: 'Live' }, { value: 'scorecard', label: 'Scorecard' }, { value: 'overs', label: 'Overs' }, { value: 'info', label: 'Info' }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'live', label: ['LIVE', 'INNINGS_BREAK', 'SECOND_INNINGS'].includes(status) ? 'Live' : 'Summary' }, { value: 'scorecard', label: 'Scorecard' }, { value: 'mvp', label: 'MVP' }, { value: 'overs', label: 'Overs' }, { value: 'info', label: 'Info' }]} />
       <div className="mt-4">
-        {tab === 'live' && (view ? <LivePanel live={view} flashKey={lastEnvelope?.version} /> : <Spinner />)}
+        {tab === 'live' && (view ? (
+          <LivePanel live={view} envelope={lastEnvelope}>
+            {view.state === 'COMPLETED' && <MatchMvp matchId={id} version={mvpVersion.current} />}
+            {view.current && <CommentaryFeed matchId={id} />}
+          </LivePanel>
+        ) : <Spinner />)}
+        {tab === 'mvp' && <MatchMvp matchId={id} version={mvpVersion.current} />}
         {tab === 'scorecard' && (sc.data ? <Scorecard scorecard={sc.data.scorecard} /> : <Spinner />)}
         {tab === 'overs' && (sc.data ? <OversTable scorecard={sc.data.scorecard} /> : <Spinner />)}
         {tab === 'info' && (

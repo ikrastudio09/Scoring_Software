@@ -1,0 +1,19 @@
+{
+  "players": [
+    { "playerID": 1024, "playerName": "Rahul Patil", "Age": 27, "playerType": "All Rounder", "playerPhone": "not imported",
+      "playerPhoto": { "url": "https://res.cloudinary.com/demo/image/upload/sample.jpg", "public_id": "sample" },
+      "playingStyle": ["Right Arm Batting", "Right Arm Balling"], "soldPoints": 450000, "playerStatus": "sold", "playerPool": 2 },
+    { "playerID": 1025, "playerName": "Jitendra Rao", "Age": 30, "playerType": "Bowler", "playerPhone": "not imported",
+      "playerPhoto": { "url": "https://res.cloudinary.com/demo/image/upload/sample.jpg", "public_id": "sample" },
+      "playingStyle": ["Left Arm Batting", "Left Arm Balling"], "soldPoints": 300000, "playerStatus": "sold", "playerPool": 3 },
+    { "playerID": 1026, "playerName": "Abdul Danish", "Age": 22, "playerType": "Wicket Keeper", "playerPhone": "not imported",
+      "playerPhoto": { "url": "https://res.cloudinary.com/demo/image/upload/sample.jpg", "public_id": "sample" },
+      "playingStyle": ["Right Arm Batting"], "soldPoints": 0, "playerStatus": "unsold", "playerPool": 4 }
+  ],
+  "teams": [
+    { "teamID": 7, "teamName": "SGM Strikers", "teamTotalPoints": 8000000,
+      "teamPlayers": [{ "playerID": 1024, "playerName": "Rahul Patil", "soldPoints": 450000, "playerPool": 2 }] },
+    { "teamID": 9, "teamName": "Royal Kings", "teamTotalPoints": 8000000,
+      "teamPlayers": [{ "playerID": 1025, "playerName": "Jitendra Rao", "soldPoints": 300000, "playerPool": 3 }] }
+  ]
+}

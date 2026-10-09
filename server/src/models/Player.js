@@ -9,6 +9,21 @@ const playerSchema = new mongoose.Schema({
   jerseyNumber: Number,
   photoUrl: String,
   active: { type: Boolean, default: true },
+
+  // ── tournament snapshot imported from the auction/registration system ──
+  // playerID is the canonical player identifier across both systems (never the name).
+  playerID: { type: Number },
+  playerType: { type: String, trim: true }, // as registered, e.g. "All Rounder"
+  playingStyle: [{ type: String, trim: true }], // e.g. ["Right Arm Batting", "Left Arm Balling"]
+  auction: {
+    soldPoints: Number,
+    playerPool: Number,
+    status: { type: String, enum: ['sold', 'unsold'] },
+    importedAt: Date,
+  },
+  // Deliberately NOT stored: playerPhone, Age and other private registration data.
 }, { timestamps: true });
+
+playerSchema.index({ playerID: 1 }, { unique: true, partialFilterExpression: { playerID: { $type: 'number' } } });
 
 export const Player = mongoose.model('Player', playerSchema);

@@ -63,6 +63,10 @@ describe('full tournament', () => {
         const w = String(m.result.winner) === String(m.teamA) ? a : b;
         const l = w === a ? b : a;
         w.won++; l.lost++; w.points += 2;
+        // Bonus point (default rules): chase held below 75% of the target, or won within 75% of the overs.
+        const [i1, i2] = m.summary.innings;
+        const chased = String(m.result.winner) === i2.team;
+        if (chased ? i2.legalBalls <= Math.floor(i2.maxBalls * 0.75) : i2.runs < (i1.runs + 1) * 0.75) w.points += 1;
       }
       for (const inn of m.summary.innings) {
         const bat = expected.get(inn.team);

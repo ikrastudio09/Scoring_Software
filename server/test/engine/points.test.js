@@ -56,4 +56,50 @@ describe('points table', () => {
     const [a] = computeTable(teams, [match('A', 'B', { type: 'win', winner: 'A' }, [inn('A', 1, 0, 6), inn('B', 0, 0, 60)])], { ...rules, win: 4 });
     expect(a.points).toBe(4);
   });
+
+  describe('bonus point', () => {
+    const withBonus = { ...rules, bonus: { enabled: true, points: 1, runsPercent: 75, oversPercent: 75 } };
+    const eight = (team, runs, legalBalls) => inn(team, runs, 3, legalBalls, 48);
+
+    it('adds a point for restricting the chase below 75% of the target', () => {
+      const rows = computeTable(teams, [match('A', 'B', { type: 'win', winner: 'A' }, [eight('A', 59, 48), eight('B', 44, 48)])], withBonus);
+      expect(rows[0]).toMatchObject({ team: { id: 'A' }, won: 1, bonus: 1, points: 3 });
+      const close = computeTable(teams, [match('A', 'B', { type: 'win', winner: 'A' }, [eight('A', 59, 48), eight('B', 45, 48)])], withBonus);
+      expect(close[0]).toMatchObject({ bonus: 0, points: 2 });
+    });
+
+    it('adds a point for chasing within 75% of the overs', () => {
+      const rows = computeTable(teams, [match('A', 'B', { type: 'win', winner: 'B' }, [eight('A', 59, 48), eight('B', 60, 36)])], withBonus);
+      expect(rows[0]).toMatchObject({ team: { id: 'B' }, bonus: 1, points: 3 });
+      const slow = computeTable(teams, [match('A', 'B', { type: 'win', winner: 'B' }, [eight('A', 59, 48), eight('B', 60, 37)])], withBonus);
+      expect(slow[0]).toMatchObject({ bonus: 0, points: 2 });
+    });
+
+    it('never for a Super Over win; NRR uses the main innings only', () => {
+      const m = match('A', 'B', { type: 'win', winner: 'A', superOver: true }, [eight('A', 59, 48), eight('B', 59, 48)]);
+      const [a] = computeTable(teams, [m], withBonus);
+      expect(a).toMatchObject({ team: { id: 'A' }, bonus: 0, points: 2, nrr: 0 });
+    });
+  });
+});
+
+describe('points table tie-breakers', () => {
+  const four = ['A', 'B', 'C', 'D'].map((id) => ({ id, name: `Team ${id}` }));
+  const won = (w, l) => match(w, l, { type: 'win', winner: w }, [inn(w, 100, 5, 60), inn(l, 99, 5, 60)]);
+
+  it('applies the configured order; head-to-head separates teams level on points', () => {
+    // A and B both finish on 4 points with identical NRR; A beat B.
+    const games = [won('A', 'B'), won('B', 'C'), won('B', 'D'), won('A', 'C'), won('D', 'A'), won('C', 'D')];
+    const h2hFirst = computeTable(four, games, { ...rules, tiebreakers: ['headToHead', 'nrr'] });
+    expect(h2hFirst.slice(0, 2).map((r) => r.team.id)).toEqual(['A', 'B']);
+    expect(h2hFirst[0].points).toBe(h2hFirst[1].points);
+    // wins-first with equal wins falls through to head-to-head as well
+    const winsFirst = computeTable(four, games, { ...rules, tiebreakers: ['wins', 'headToHead'] });
+    expect(winsFirst.slice(0, 2).map((r) => r.team.id)).toEqual(['A', 'B']);
+  });
+
+  it('defaults to NRR, then wins, then head-to-head, then name', () => {
+    const rows = computeTable(teams, [], rules);
+    expect(rows.map((r) => r.team.id)).toEqual(['A', 'B', 'C']);
+  });
 });

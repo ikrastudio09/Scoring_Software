@@ -7,6 +7,9 @@ import * as matches from '../services/matches.js';
 import { executeCommand } from '../services/scoring.js';
 import { getRuntime, liveView, scorecard, scorerView } from '../services/runtime.js';
 import { ttlCache } from '../utils/ttlCache.js';
+import { notFound } from '../utils/errors.js';
+import { editCommentary, getCommentary } from '../services/commentary.js';
+import { getMatchMvp } from '../services/stats.js';
 
 const listCache = ttlCache(2000);
 
@@ -37,7 +40,26 @@ router.get('/:id/scorecard', async (req, res) => {
   res.json({ scorecard: scorecard(await getRuntime(req.params.id)) });
 });
 
+router.get('/:id/commentary', validate(v.commentaryQuery, 'query'), async (req, res) => {
+  matches.assertObjectId(req.params.id, 'Match');
+  noStore(res);
+  res.json(await getCommentary(req.params.id, req.validQuery));
+});
+
+router.get('/:id/mvp', async (req, res) => {
+  matches.assertObjectId(req.params.id, 'Match');
+  noStore(res);
+  res.json(await getMatchMvp(req.params.id));
+});
+
 // ── scorer / admin ──
+router.put('/:id/commentary/:seq', requireScorer, validate(v.commentaryEditSchema), async (req, res) => {
+  matches.assertObjectId(req.params.id, 'Match');
+  const seq = Number(req.params.seq);
+  if (!Number.isInteger(seq) || seq < 1) throw notFound('Delivery');
+  res.json({ entry: await editCommentary(req.params.id, seq, req.body.text, req.user) });
+});
+
 router.get('/:id/scorer', requireScorer, async (req, res) => {
   matches.assertObjectId(req.params.id, 'Match');
   noStore(res);

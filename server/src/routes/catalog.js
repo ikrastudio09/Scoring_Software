@@ -9,18 +9,21 @@ import { getTournament, publicTournament, updateTournament } from '../services/t
 import { audit } from '../services/audit.js';
 import { invalidateRuntime } from '../services/runtime.js';
 import { invalidatePoints, getTeamRecord } from '../services/points.js';
-import { invalidateStats, getPlayerCareer } from '../services/stats.js';
+import { invalidateStats, getPlayerCareer, getTeamStats } from '../services/stats.js';
 import { conflict, notFound } from '../utils/errors.js';
 
 const router = Router();
 
+// Public shapes: an explicit allow-list, so private fields can never leak into the API.
 const teamOut = (t) => ({
   id: String(t._id), name: t.name, shortName: t.shortName, color: t.color, logoUrl: t.logoUrl, group: t.group,
-  captain: t.captain ? String(t.captain) : null, homeGround: t.homeGround,
+  captain: t.captain ? String(t.captain) : null, homeGround: t.homeGround, teamID: t.teamID ?? null,
 });
 const playerOut = (p) => ({
   id: String(p._id), name: p.name, team: p.team?._id ? teamOut(p.team) : String(p.team), role: p.role,
   battingStyle: p.battingStyle, bowlingStyle: p.bowlingStyle, jerseyNumber: p.jerseyNumber, photoUrl: p.photoUrl, active: p.active,
+  playerID: p.playerID ?? null, playerType: p.playerType || null, playingStyle: p.playingStyle || [],
+  auction: p.auction?.status ? { soldPoints: p.auction.soldPoints ?? 0, playerPool: p.auction.playerPool ?? null, status: p.auction.status } : null,
 });
 const findOr404 = async (Model, id, what) => {
   if (!mongoose.isValidObjectId(id)) throw notFound(what);
@@ -37,7 +40,9 @@ router.get('/tournament', async (_req, res) => {
 });
 router.put('/tournament', requireAdmin, validate(v.tournamentSchema), async (req, res) => {
   const t = await updateTournament(req.body);
+  invalidateRuntime(); // bonus-point rules are shown on every scorecard
   invalidatePoints();
+  invalidateStats(); // MVP weights may have changed
   await audit(req.user, 'tournament.update', 'tournament', t._id, req.body);
   res.json({ tournament: publicTournament(t) });
 });
@@ -53,11 +58,12 @@ router.get('/teams', async (_req, res) => {
 });
 router.get('/teams/:id', async (req, res) => {
   const t = await findOr404(Team, req.params.id, 'Team');
-  const [players, record] = await Promise.all([
+  const [players, record, stats] = await Promise.all([
     Player.find({ team: t._id }).sort({ name: 1 }).lean(),
     getTeamRecord(t._id),
+    getTeamStats(t._id),
   ]);
-  res.json({ team: { ...teamOut(t), squad: players.map(playerOut), record } });
+  res.json({ team: { ...teamOut(t), squad: players.map(playerOut), record, stats } });
 });
 router.post('/teams', requireAdmin, validate(v.teamSchema), async (req, res) => {
   const t = await Team.create(req.body);

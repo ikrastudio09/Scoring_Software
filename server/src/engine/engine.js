@@ -4,12 +4,15 @@
 // list of effective events, `replay` always produces the same state. `applyEvent` mutates the
 // state it is given, so callers pass a clone and discard it if a ScoringError is thrown.
 
-import { EVENT_TYPES, ERROR_CODES as E, RESULT_TYPES } from '@cricket/shared';
+import { EVENT_TYPES, ERROR_CODES as E, RESULT_TYPES, SHOT_TYPES } from '@cricket/shared';
 import { fail } from './errors.js';
 import {
   allowsFielder, allowsRuns, canDismissEitherBatter, dismissalNotPossible, isBowlerCredited,
   isDeliveryDismissal, normalizeRules, requiresFielder,
 } from './rules.js';
+
+const SUPER_OVER_OVERS = 1;
+const SUPER_OVER_WICKETS = 2;
 
 export const MATCH_STATE = Object.freeze({
   NOT_STARTED: 'NOT_STARTED',
@@ -22,7 +25,8 @@ export const MATCH_STATE = Object.freeze({
  * setup = {
  *   rules: { oversPerInnings, ballsPerOver, maxOversPerBowler, wideRuns, noBallRuns, freeHit },
  *   battingFirst: teamId, bowlingFirst: teamId,
- *   xi: { [teamId]: [playerId, ...] }       // playing XI of each team
+ *   xi: { [teamId]: [playerId, ...] },      // playing XI of each team
+ *   superOver: boolean,                     // a tie goes to a Super Over (knockout matches)
  * }
  */
 export function createState(setup) {
@@ -148,13 +152,11 @@ function closePartnership(inn, endedBy) {
 
 function startInnings(ctx, p) {
   const { state, setup, rules } = ctx;
-  let number;
-  if (state.status === MATCH_STATE.NOT_STARTED) number = 1;
-  else if (state.status === MATCH_STATE.INNINGS_BREAK) number = 2;
-  else fail(E.INVALID_TRANSITION, 'An innings is already in progress');
-
-  const battingTeam = number === 1 ? setup.battingFirst : setup.bowlingFirst;
-  const bowlingTeam = number === 1 ? setup.bowlingFirst : setup.battingFirst;
+  if (state.status !== MATCH_STATE.NOT_STARTED && state.status !== MATCH_STATE.INNINGS_BREAK) {
+    fail(E.INVALID_TRANSITION, 'An innings is already in progress');
+  }
+  const number = state.innings.length + 1;
+  const { battingTeam, bowlingTeam } = nextInningsTeams(state, setup);
   const { strikerId, nonStrikerId, bowlerId } = p;
 
   if (!inXI(setup, battingTeam, strikerId)) fail(E.INVALID_PLAYER, 'Striker is not in the batting XI');
@@ -162,9 +164,11 @@ function startInnings(ctx, p) {
   if (strikerId === nonStrikerId) fail(E.INVALID_PLAYER, 'Striker and non-striker must be different players');
   if (!inXI(setup, bowlingTeam, bowlerId)) fail(E.INVALID_BOWLER, 'Bowler is not in the bowling XI');
 
-  const first = state.innings[0];
+  // Innings 3+ are Super Overs, played in pairs: one over and two wickets per side.
+  const superOver = number > 2 ? Math.ceil((number - 2) / 2) : null;
   const inn = {
     number,
+    superOver,
     battingTeam,
     bowlingTeam,
     status: 'IN_PROGRESS',
@@ -172,9 +176,10 @@ function startInnings(ctx, p) {
     runs: 0,
     wickets: 0,
     legalBalls: 0,
-    maxBalls: rules.oversPerInnings * rules.ballsPerOver,
-    maxWickets: setup.xi[battingTeam].length - 1,
-    target: number === 2 ? first.runs + 1 : null,
+    maxBalls: (superOver ? SUPER_OVER_OVERS : rules.oversPerInnings) * rules.ballsPerOver,
+    maxWickets: Math.min(setup.xi[battingTeam].length - 1, superOver ? SUPER_OVER_WICKETS : Infinity),
+    // The second innings of each pair chases the first.
+    target: number % 2 === 0 ? state.innings[number - 2].runs + 1 : null,
     extras: { wides: 0, noBalls: 0, byes: 0, legByes: 0, total: 0 },
     striker: strikerId,
     nonStriker: nonStrikerId,
@@ -198,6 +203,19 @@ function startInnings(ctx, p) {
   startPartnershipIfReady(inn);
   assignBowler(ctx, inn, bowlerId);
   ctx.effects.push(number === 1 ? 'MATCH_STARTED' : 'INNINGS_STARTED');
+}
+
+/**
+ * Which side bats in the next innings. Innings 1–2 follow the toss; in every Super Over the side
+ * that batted second in the previous pair bats first (ICC playing conditions).
+ */
+export function nextInningsTeams(state, setup) {
+  const n = state.innings.length + 1;
+  let battingTeam;
+  if (n === 1) battingTeam = setup.battingFirst;
+  else if (n % 2 === 0) battingTeam = state.innings[n - 2].bowlingTeam;
+  else battingTeam = state.innings[n - 2].battingTeam;
+  return { battingTeam, bowlingTeam: battingTeam === setup.battingFirst ? setup.bowlingFirst : setup.battingFirst };
 }
 
 /** Bowler availability for the next/current over. Returns null if allowed, else {code, message}. */
@@ -366,6 +384,9 @@ function delivery(ctx, p, seq) {
   const offBat = extra === null || (extra === 'noball' && noBallRunsType === 'bat');
   if (boundary && runs !== 4 && runs !== 6) fail(E.INVALID_DELIVERY, 'A boundary is worth 4 or 6');
   if (boundary && runs === 6 && !offBat) fail(E.INVALID_DELIVERY, 'Six can only be scored off the bat');
+  // Optional shot description: commentary only, never affects the score.
+  const shot = p.shot ?? null;
+  if (shot !== null && !Object.hasOwn(SHOT_TYPES, shot)) fail(E.INVALID_DELIVERY, `Unknown shot type: ${shot}`);
 
   // ── wicket validation (before any mutation) ──
   const w = p.wicket || null;
@@ -486,6 +507,7 @@ function delivery(ctx, p, seq) {
     boundary: four ? 4 : six ? 6 : null,
     wicket: w ? { type: w.type, batter: dismissedId } : null,
     freeHit,
+    shot,
     label: ballLabel({ extra, runs, total, noBallRunsType, wicket: Boolean(w) }),
   };
   over.balls.push(ball);
@@ -561,17 +583,37 @@ function completeInnings(ctx, inn, reason) {
   closeOpenOver(inn);
   closePartnership(inn, 'innings_end');
   ctx.effects.push('INNINGS_COMPLETED');
-  if (inn.number === 1) {
+  if (inn.number % 2 === 1) {
     state.status = MATCH_STATE.INNINGS_BREAK;
     return;
   }
-  state.result = computeResult(state);
+  const result = computeResult(state);
+  if (result.type === RESULT_TYPES.TIE && ctx.setup.superOver) {
+    // Scores level in a knockout: a Super Over (and another, until there is a winner).
+    state.status = MATCH_STATE.INNINGS_BREAK;
+    ctx.effects.push('SUPER_OVER');
+    return;
+  }
+  state.result = result;
   state.status = MATCH_STATE.COMPLETED;
   ctx.effects.push('MATCH_COMPLETED');
 }
 
+/** Result of the last completed pair of innings (the match itself, or the deciding Super Over). */
 export function computeResult(state) {
-  const [first, second] = state.innings;
+  const n = state.innings.length;
+  const first = state.innings[n - 2];
+  const second = state.innings[n - 1];
+  if (second.superOver) {
+    if (second.runs === first.runs) return { type: RESULT_TYPES.TIE, winner: null, loser: null };
+    const chased = second.runs > first.runs;
+    return {
+      type: RESULT_TYPES.WIN,
+      winner: chased ? second.battingTeam : first.battingTeam,
+      loser: chased ? first.battingTeam : second.battingTeam,
+      superOver: true,
+    };
+  }
   if (second.runs >= second.target) {
     return {
       type: RESULT_TYPES.WIN,

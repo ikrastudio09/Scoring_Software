@@ -38,7 +38,10 @@ export function createApp() {
   }));
   app.use(cors({ origin: corsOrigin() }));
   app.use(compression({ threshold: 1024 }));
-  app.use(express.json({ limit: '100kb' }));
+  // Small bodies everywhere except the one-off tournament import (a few hundred players).
+  const smallJson = express.json({ limit: '100kb' });
+  const importJson = express.json({ limit: '5mb' });
+  app.use((req, res, next) => (req.path.startsWith('/api/admin/import/') ? importJson : smallJson)(req, res, next));
   app.use(requestLogger);
 
   const api = express.Router();

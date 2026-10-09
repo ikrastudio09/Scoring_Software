@@ -33,6 +33,9 @@ matches, confirm results) and `admin` (everything). 🔓 = public.
 | GET | `/matches/:id` | 🔓 | detail incl. XIs |
 | GET | `/matches/:id/live` | 🔓 | LiveView (see REALTIME_EVENTS.md) |
 | GET | `/matches/:id/scorecard` | 🔓 | full scorecard, FOW, partnerships, over-by-over |
+| GET | `/matches/:id/commentary?limit=30&before=<seq>` | 🔓 | ball-by-ball commentary, newest first |
+| PUT | `/matches/:id/commentary/:seq` | scorer | `{text}` replaces one ball's sentence; `""` restores the generated text |
+| GET | `/matches/:id/mvp` | 🔓 | top 5 by impact with reasons (`final: false` while live) |
 | GET | `/matches/:id/scorer` | scorer | ScorerView |
 | GET | `/matches/:id/events` | scorer | audit log of every scoring command |
 | GET | `/matches/:id/player-of-match-suggestion` | scorer | |
@@ -41,7 +44,7 @@ matches, confirm results) and `admin` (everything). 🔓 = public.
 | DELETE | `/matches/:id` | admin | only without scoring events |
 | POST | `/matches/:id/setup` | scorer | `{toss:{winner,decision}, playingXI:{teamA:[ids], teamB:[ids]}}` |
 | POST | `/matches/:id/status` | admin | `{status: SCHEDULED\|POSTPONED\|CANCELLED\|ABANDONED, note}` (not after scoring starts) |
-| POST | `/matches/:id/confirm-result` | scorer | `{playerOfMatch}` → points & stats update |
+| POST | `/matches/:id/confirm-result` | scorer | `{playerOfMatch}` → points & stats update; clears the active match |
 | POST | `/matches/:id/reopen` | admin | `{reason}` → unlocks a confirmed match for corrections |
 
 ## Scoring commands (scorer)
@@ -57,7 +60,7 @@ Response: `{ version, duplicate, effects, view: ScorerView }`.
 | Path | Body (besides the two fields above) |
 |---|---|
 | `POST /matches/:id/innings/start` | `{strikerId, nonStrikerId, bowlerId}` |
-| `POST /matches/:id/deliveries` | `{runs 0–7, extra?: wide\|noball\|bye\|legbye, boundary?, noBallRunsType?: bat\|bye\|legbye, wicket?: {type, batterId?, fielderId?, substituteFielder?}}` |
+| `POST /matches/:id/deliveries` | `{runs 0–7, extra?: wide\|noball\|bye\|legbye, boundary?, noBallRunsType?: bat\|bye\|legbye, shot?: drive\|pull\|…, wicket?: {type, batterId?, fielderId?, substituteFielder?}}` (`shot` is optional, commentary only) |
 | `POST /matches/:id/bowler` | `{bowlerId, midOver?}` |
 | `POST /matches/:id/batter` | `{batterId}` |
 | `POST /matches/:id/retire` | `{batterId, kind: retired_hurt\|retired_out}` |
@@ -74,12 +77,14 @@ no-ball hit for six `{runs:6, extra:'noball', boundary:true}` · run out of the 
 Domain error codes: `INVALID_PLAYER INVALID_BOWLER BOWLER_LIMIT_REACHED CONSECUTIVE_OVERS
 BOWLER_REQUIRED BATTER_REQUIRED INVALID_WICKET INVALID_DELIVERY INVALID_STRIKE_STATE
 INNINGS_NOT_IN_PROGRESS MATCH_NOT_STARTED MATCH_COMPLETED MATCH_LOCKED INVALID_TRANSITION
-NOTHING_TO_UNDO STALE_STATE` (+ `VALIDATION_ERROR UNAUTHORIZED FORBIDDEN NOT_FOUND RATE_LIMITED`).
+NOTHING_TO_UNDO STALE_STATE ANOTHER_MATCH_ACTIVE` (another match is live, or a finished one is not confirmed yet) (+ `VALIDATION_ERROR UNAUTHORIZED FORBIDDEN NOT_FOUND RATE_LIMITED`).
 
 ## Public aggregates
 | Method | Path | Notes |
 |---|---|---|
+| GET | `/live` | `{live:false}` or `{live:true, inPlay, matchId, version, view, commentary}` — the one active match |
 | GET | `/home` | tournament, in-play matches with live views, upcoming, recent results (2 s cache) |
+| GET | `/stats/mvp` | tournament MVP table (impact components, MVP awards) + `valueForMoney` + current weights |
 | GET | `/points-table` | groups → rows `{position, team, played, won, lost, tied, noResult, points, nrr, form}` |
 | GET | `/stats/leaderboards` | most runs/wickets, highest scores, best bowling, SR, economy, average, 4s, 6s, catches, dots, POTM |
 
@@ -91,3 +96,9 @@ NOTHING_TO_UNDO STALE_STATE` (+ `VALIDATION_ERROR UNAUTHORIZED FORBIDDEN NOT_FOU
 | GET | `/admin/audit?entityId=&limit=` |
 | POST | `/admin/stats/rebuild` — recompute all statistics from events |
 | POST | `/admin/reconcile` — resync match documents from the event log |
+| POST | `/admin/import/auction/preview` — `{players:[…], teams:[…]}` → validation report, checks, plan, `hash` (writes nothing) |
+| POST | `/admin/import/auction/commit` — same body + `hash` → re-validated and applied (`422 IMPORT_INVALID` with the report if invalid) |
+
+`PUT /tournament` also accepts `points.tiebreakers` (order of `nrr`, `wins`, `headToHead`) and
+`impactWeights` (partial MVP weights, `null` = defaults). Public player objects carry `playerID`,
+`playerType`, `playingStyle` and `auction {soldPoints, playerPool, status}` — never a phone number.

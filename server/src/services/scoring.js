@@ -8,6 +8,7 @@ import { logger } from '../utils/logger.js';
 import { metrics } from '../utils/metrics.js';
 import { getRuntime, invalidateRuntime, scorerView, withMatchLock, undoLastEvent } from './runtime.js';
 import { publishMatchUpdate } from '../realtime/hub.js';
+import { assertCanGoLive, invalidateActiveMatch, isInPlay, withActivationLock } from './active.js';
 
 const SCORING_STATUSES = new Set([
   MATCH_STATUS.READY, MATCH_STATUS.LIVE, MATCH_STATUS.INNINGS_BREAK, MATCH_STATUS.SECOND_INNINGS,
@@ -124,42 +125,56 @@ async function executeLocked(matchId, cmd, user) {
     effective = [...rt.effective, { seq, type: doc.type, payload: doc.payload, label: doc.label }];
   }
 
-  // ── commit point: the journaled insert of the event ──
-  const tDb = performance.now();
-  try {
-    await MatchEvent.create(doc);
-  } catch (err) {
-    if (!isDuplicateKey(err)) throw err;
-    // Another writer got there first (or this is a retry that raced the original).
-    invalidateRuntime(matchId);
-    rt = await getRuntime(matchId);
-    if (cmd.clientEventId && rt.clientIds.has(cmd.clientEventId)) {
-      return { rt, duplicate: true, version: rt.lastSeq, effects: [] };
-    }
-    throw new AppError(409, ERROR_CODES.STALE_STATE, 'Another update was recorded at the same time. Screen refreshed — please retry.', {
-      currentVersion: rt.lastSeq, view: scorerView(rt),
+  // One match in play at a time: a command that moves this match INTO play (the first ball of
+  // the match, or an undo that reopens a finished one) is re-checked under the global
+  // activation lock. Ordinary deliveries never take that lock.
+  if (isInPlay(deriveStatus(next)) && !isInPlay(rt.match.status)) {
+    const starting = cmd.type === EVENT_TYPES.START_INNINGS && next.innings.length === 1;
+    return withActivationLock(async () => {
+      await assertCanGoLive(rt.id, { starting });
+      return commit();
     });
   }
-  const dbMs = performance.now() - tDb;
+  return commit();
 
-  if (cmd.type === EVENT_TYPES.UNDO) {
-    // Audit convenience only; effective events are always derived from the UNDO records.
-    MatchEvent.updateOne(
-      { match: rt.match._id, seq: doc.undoesSeq },
-      { $set: { undone: true, undoneAt: doc.createdAt, undoneBy: user?.username, undoneBySeq: seq } },
-    ).catch((err) => logger.error({ err, matchId: rt.id }, 'failed to flag undone event'));
+  async function commit() {
+    // ── commit point: the journaled insert of the event ──
+    const tDb = performance.now();
+    try {
+      await MatchEvent.create(doc);
+    } catch (err) {
+      if (!isDuplicateKey(err)) throw err;
+      // Another writer got there first (or this is a retry that raced the original).
+      invalidateRuntime(matchId);
+      rt = await getRuntime(matchId);
+      if (cmd.clientEventId && rt.clientIds.has(cmd.clientEventId)) {
+        return { rt, duplicate: true, version: rt.lastSeq, effects: [] };
+      }
+      throw new AppError(409, ERROR_CODES.STALE_STATE, 'Another update was recorded at the same time. Screen refreshed — please retry.', {
+        currentVersion: rt.lastSeq, view: scorerView(rt),
+      });
+    }
+    const dbMs = performance.now() - tDb;
+
+    if (cmd.type === EVENT_TYPES.UNDO) {
+      // Audit convenience only; effective events are always derived from the UNDO records.
+      MatchEvent.updateOne(
+        { match: rt.match._id, seq: doc.undoesSeq },
+        { $set: { undone: true, undoneAt: doc.createdAt, undoneBy: user?.username, undoneBySeq: seq } },
+      ).catch((err) => logger.error({ err, matchId: rt.id }, 'failed to flag undone event'));
+    }
+
+    // ── in-memory commit ──
+    const prevStatus = rt.match.status;
+    rt.state = next;
+    rt.effective = effective;
+    rt.lastSeq = seq;
+    if (cmd.clientEventId) rt.clientIds.add(cmd.clientEventId);
+    rt.views = {};
+    await syncMatchDocument(rt);
+
+    return { rt, duplicate: false, version: seq, effects, prevStatus, dbMs, label: doc.label };
   }
-
-  // ── in-memory commit ──
-  const prevStatus = rt.match.status;
-  rt.state = next;
-  rt.effective = effective;
-  rt.lastSeq = seq;
-  if (cmd.clientEventId) rt.clientIds.add(cmd.clientEventId);
-  rt.views = {};
-  await syncMatchDocument(rt);
-
-  return { rt, duplicate: false, version: seq, effects, prevStatus, dbMs, label: doc.label };
 }
 
 /** Write the derived fields onto the match document. Failure is logged, never fatal. */
@@ -177,10 +192,12 @@ export async function syncMatchDocument(rt) {
     'result.marginRuns': r?.marginRuns ?? null,
     'result.marginWickets': r?.marginWickets ?? null,
     'result.ballsRemaining': r?.ballsRemaining ?? null,
+    'result.superOver': Boolean(r?.superOver),
     'result.text': resultText(r, meta),
     completedAt: state.status === 'COMPLETED' ? (rt.match.completedAt || new Date()) : null,
   };
   if (state.innings.length && !rt.match.startedAt) set.startedAt = new Date();
+  const statusChanged = status !== rt.match.status;
   // Keep the in-memory copy in step with what we write.
   rt.match = {
     ...rt.match,
@@ -197,6 +214,7 @@ export async function syncMatchDocument(rt) {
       marginRuns: set['result.marginRuns'],
       marginWickets: set['result.marginWickets'],
       ballsRemaining: set['result.ballsRemaining'],
+      superOver: set['result.superOver'],
       text: set['result.text'],
     },
   };
@@ -206,6 +224,7 @@ export async function syncMatchDocument(rt) {
   } catch (err) {
     logger.error({ err, matchId: rt.id }, 'failed to sync match document (events are safe; will resync on next event)');
   }
+  if (statusChanged) invalidateActiveMatch();
 }
 
 /**

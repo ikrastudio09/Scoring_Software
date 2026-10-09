@@ -6,3 +6,4 @@ export { Match } from './Match.js';
 export { MatchEvent } from './MatchEvent.js';
 export { PlayerMatchStat } from './PlayerMatchStat.js';
 export { AuditLog } from './AuditLog.js';
+export { CommentaryEdit } from './CommentaryEdit.js';

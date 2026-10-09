@@ -89,7 +89,8 @@ describe('full match through the API', () => {
     table = (await ctx.http.get('/api/points-table').expect(200)).body;
     rowB = table.groups[0].rows.find((r) => r.team.id === B.id);
     const rowA = table.groups[0].rows.find((r) => r.team.id === A.id);
-    expect(rowB).toMatchObject({ played: 1, won: 1, points: 2, position: 1 });
+    // 2 for the win + 1 bonus: the chase finished with 5 of 12 balls left (within 75% of the overs).
+    expect(rowB).toMatchObject({ played: 1, won: 1, bonus: 1, points: 3, position: 1 });
     expect(rowA).toMatchObject({ played: 1, lost: 1, points: 0 });
     // NRR: B 17 in 1.1 overs (7 balls) vs 16 in 2 overs; A the inverse
     expect(rowB.nrr).toBeCloseTo(17 / (7 / 6) - 16 / 2, 3);

@@ -73,4 +73,8 @@ test('app bundle loads cross-origin and receives realtime updates', async ({ bro
   await page.context().setOffline(false);
   await expect(page.getByTestId('live-score')).toHaveText('10/1', { timeout: 20000 });
   expect(errors).toEqual([]);
+
+  // Only one match may be live: close this one (as an operator would) so later specs can start theirs.
+  await cmd('conclude', { resultType: 'no_result' });
+  expect((await request.post(`/api/matches/${m.id}/confirm-result`, { headers: H, data: {} })).ok()).toBe(true);
 });

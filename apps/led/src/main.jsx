@@ -124,9 +124,9 @@ function Board({ view, envelope, tournament }) {
 
       <div className="mt-[1vh] flex min-h-[9vh] items-center rounded-[1.5vh] bg-white/10 px-[2vw] text-[5.4vh] font-bold">
         {done ? <span className="text-yellow-300">{view.result?.text}</span>
-          : breakTime ? <span className="text-yellow-300">INNINGS BREAK · TARGET {c.runs + 1}</span>
+          : breakTime ? <span className="text-yellow-300">{view.superOver && c.target !== null ? 'SCORES LEVEL · SUPER OVER NEXT' : `INNINGS BREAK · TARGET ${c.runs + 1}`}</span>
             : c.target !== null ? <span>NEED <span className="text-yellow-300 tnum">{c.runsNeeded}</span> FROM <span className="text-yellow-300 tnum">{c.ballsRemaining}</span> BALLS<span className="ml-[2vw] text-[4.2vh] font-normal text-white/70">TARGET {c.target} · RRR {fixed(c.rrr)}</span></span>
-              : <span className="text-white/70">{first?.number === 1 && 'First innings'}{c.partnership ? ` · Partnership ${c.partnership.runs} (${c.partnership.balls})` : ''}</span>}
+              : <span className="text-white/70">{c.superOver ? `Super Over${c.superOver > 1 ? ` ${c.superOver}` : ''}` : first?.number === 1 && 'First innings'}{c.partnership ? ` · Partnership ${c.partnership.runs} (${c.partnership.balls})` : ''}</span>}
         {c.freeHit && !done && <span className="ml-auto rounded-[1vh] bg-amber-500 px-[1.5vw] text-[5vh] font-black text-black">FREE HIT</span>}
       </div>
 

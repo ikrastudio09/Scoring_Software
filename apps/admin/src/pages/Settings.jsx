@@ -6,16 +6,60 @@ import { Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner, Text
 
 const n = (v) => (v === '' ? undefined : Number(v));
 
+const TIEBREAK_PRESETS = [
+  ['nrr,wins,headToHead', 'Net run rate → wins → head-to-head'],
+  ['headToHead,nrr,wins', 'Head-to-head → net run rate → wins'],
+  ['wins,nrr,headToHead', 'Wins → net run rate → head-to-head'],
+  ['wins,headToHead,nrr', 'Wins → head-to-head → net run rate'],
+];
+const WEIGHT_LABELS = {
+  batting: { run: 'per run', four: 'per four (bonus)', six: 'per six (bonus)', fifty: '50+ bonus', hundred: '100+ bonus', runsAbovePar: '× runs above match rate', duck: 'duck' },
+  bowling: { wicket: 'per wicket', topOrderWicket: 'top-order (1–4) wicket bonus', dot: 'per dot ball', maiden: 'per maiden', threeWickets: '3-wicket bonus', runsSavedVsPar: '× runs saved vs match rate' },
+  fielding: { catch: 'per catch', runOut: 'per run out', stumping: 'per stumping' },
+  context: { chaseWinPct: '% bonus of batting in a won chase', defendWinPct: '% bonus of bowling in a won defence' },
+};
+
+/** MVP impact weights (engine/impact.js). Auction value is deliberately not a weight. */
+function ImpactWeights({ weights, setWeights, onReset }) {
+  if (!weights) return null;
+  return (
+    <Card className="space-y-3 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-semibold">MVP impact weights <span className="text-sm font-normal text-slate-500">(applied immediately to all matches)</span></h2>
+        <Button variant="ghost" size="px-2 py-1 text-xs" onClick={onReset}>Reset to defaults</Button>
+      </div>
+      {Object.entries(WEIGHT_LABELS).map(([group, labels]) => (
+        <div key={group}>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{group}</p>
+          <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-4">
+            {Object.entries(labels).map(([k, label]) => (
+              <Field key={k} label={label}>
+                <Input type="number" step="0.5" value={weights[group]?.[k] ?? ''} onChange={(e) => setWeights({ ...weights, [group]: { ...weights[group], [k]: e.target.value } })} />
+              </Field>
+            ))}
+          </div>
+        </div>
+      ))}
+    </Card>
+  );
+}
+
 export function TournamentSettings() {
   const toast = useToast();
   const { data, error, reload } = useApi(api, '/tournament');
+  const mvp = useApi(api, '/stats/mvp');
   const [f, setF] = useState(null);
+  const [weights, setWeights] = useState(null);
+  const [resetWeights, setResetWeights] = useState(false);
   const [err, setErr] = useState(null);
   useEffect(() => { if (data) setF({ ...data.tournament, venuesText: (data.tournament.venues || []).join('\n') }); }, [data]);
+  useEffect(() => { if (mvp.data) { setWeights(mvp.data.weights); setResetWeights(false); } }, [mvp.data]);
   if (error && !data) return <ErrorBox error={error} onRetry={reload} />;
   if (!f) return <Spinner />;
   const r = f.rules;
   const p = f.points;
+  const bonus = { enabled: true, points: 1, runsPercent: 75, oversPercent: 75, ...(p.bonus || {}) };
+  const setBonus = (k, v) => setPts('bonus', { ...bonus, [k]: v });
   const setRule = (k, v) => setF({ ...f, rules: { ...r, [k]: v } });
   const setPts = (k, v) => setF({ ...f, points: { ...p, [k]: v } });
   const save = async () => {
@@ -29,10 +73,16 @@ export function TournamentSettings() {
           oversPerInnings: n(r.oversPerInnings), ballsPerOver: n(r.ballsPerOver), maxOversPerBowler: n(r.maxOversPerBowler),
           playersPerSide: n(r.playersPerSide), wideRuns: n(r.wideRuns), noBallRuns: n(r.noBallRuns), freeHit: Boolean(r.freeHit),
         },
-        points: { win: n(p.win), loss: n(p.loss), tie: n(p.tie), noResult: n(p.noResult), stages: p.stages, nrrAllOutUsesFullQuota: Boolean(p.nrrAllOutUsesFullQuota) },
+        points: {
+          win: n(p.win), loss: n(p.loss), tie: n(p.tie), noResult: n(p.noResult), stages: p.stages, nrrAllOutUsesFullQuota: Boolean(p.nrrAllOutUsesFullQuota),
+          tiebreakers: (p.tiebreakers?.length ? p.tiebreakers : ['nrr', 'wins', 'headToHead']),
+          bonus: { enabled: Boolean(bonus.enabled), points: n(bonus.points), runsPercent: n(bonus.runsPercent), oversPercent: n(bonus.oversPercent) },
+        },
+        impactWeights: resetWeights ? null : weights && Object.fromEntries(Object.entries(weights).map(([g, o]) => [g, Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '').map(([k, v]) => [k, Number(v)]))])),
       });
       toast('Settings saved', 'success');
       reload();
+      mvp.reload();
     } catch (e) { setErr(e); }
   };
   return (
@@ -70,7 +120,22 @@ export function TournamentSettings() {
           <Select multiple value={p.stages} onChange={(e) => setPts('stages', [...e.target.selectedOptions].map((o) => o.value))}>{MATCH_STAGES.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}</Select>
         </Field>
         <label className="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={Boolean(p.nrrAllOutUsesFullQuota)} onChange={(e) => setPts('nrrAllOutUsesFullQuota', e.target.checked)} /> NRR: charge a bowled-out side its full quota of overs</label>
+        <Field label="Teams level on points are separated by" className="sm:col-span-4">
+          <Select value={(p.tiebreakers?.length ? p.tiebreakers : ['nrr', 'wins', 'headToHead']).join(',')} onChange={(e) => setPts('tiebreakers', e.target.value.split(','))}>
+            {TIEBREAK_PRESETS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </Select>
+        </Field>
+        <label className="flex items-center gap-2 text-sm font-medium sm:col-span-4"><input type="checkbox" checked={Boolean(bonus.enabled)} onChange={(e) => setBonus('enabled', e.target.checked)} /> Bonus point for a dominant win</label>
+        {bonus.enabled && (
+          <>
+            <Field label="Bonus points"><Input type="number" min="0" max="5" value={bonus.points} onChange={(e) => setBonus('points', e.target.value)} /></Field>
+            <Field label="Defending: chase held below (% of target)" className="sm:col-span-3"><Input type="number" min="1" max="100" value={bonus.runsPercent} onChange={(e) => setBonus('runsPercent', e.target.value)} /></Field>
+            <Field label="Chasing: target reached within (% of overs)" className="sm:col-span-4"><Input type="number" min="1" max="100" value={bonus.oversPercent} onChange={(e) => setBonus('oversPercent', e.target.value)} /></Field>
+            <p className="text-xs text-slate-500 sm:col-span-4">Example at 75%: target 60 → the chasing side must finish on 44 or less; 8-over match → the chase must be completed within 6.0 overs. Super Over wins never earn a bonus. A tie outside the league stage is always decided by a Super Over.</p>
+          </>
+        )}
       </Card>
+      <ImpactWeights weights={weights} setWeights={(w) => { setWeights(w); setResetWeights(false); }} onReset={() => { setResetWeights(true); setWeights(null); toast('Defaults will be restored when you save', 'info'); }} />
     </div>
   );
 }

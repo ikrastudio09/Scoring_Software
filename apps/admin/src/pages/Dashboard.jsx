@@ -6,7 +6,7 @@ import { Button, Card, ErrorBox, PageHeader, Spinner, StatusBadge, fmtDateTime }
 
 const IN_PLAY = ['LIVE', 'INNINGS_BREAK', 'SECOND_INNINGS'];
 
-function Row({ m }) {
+function Row({ m, activeOther }) {
   const score = (m.summary?.innings || []).map((i) => `${i.runs}/${i.wickets} (${i.overs})`).join(' · ');
   const needsSetup = m.status === 'SCHEDULED' && m.teamA?.id && m.teamB?.id;
   const action = IN_PLAY.includes(m.status) || m.status === 'READY' ? { to: `/matches/${m.id}/score`, label: m.status === 'READY' ? 'Start scoring' : 'Resume scoring', primary: true }
@@ -22,7 +22,9 @@ function Row({ m }) {
       </div>
       <StatusBadge status={m.status} />
       {m.status === 'COMPLETED' && !m.result?.confirmed && <span className="text-xs font-semibold text-amber-700">unconfirmed</span>}
-      <Link to={action.to}><Button variant={action.primary ? 'primary' : 'secondary'} size="px-3 py-1.5 text-sm">{action.label}</Button></Link>
+      {m.status === 'READY' && activeOther
+        ? <span className="text-xs text-slate-500" title="Only one match can be live at a time">Waiting for match {activeOther.number}</span>
+        : <Link to={action.to}><Button variant={action.primary ? 'primary' : 'secondary'} size="px-3 py-1.5 text-sm">{action.label}</Button></Link>}
     </div>
   );
 }
@@ -42,13 +44,24 @@ export default function Dashboard() {
   }, [data]);
   if (error && !data) return <ErrorBox error={error} onRetry={reload} />;
   if (!data) return <Spinner />;
+  // One match at a time: the live (or finished-but-unconfirmed) match blocks starting another.
+  const active = data.matches.find((m) => IN_PLAY.includes(m.status)) || data.matches.find((m) => m.status === 'COMPLETED' && !m.result?.confirmed);
   return (
     <div>
       <PageHeader title="Matches"><Link to="/fixtures"><Button variant="secondary">All fixtures</Button></Link></PageHeader>
+      {active && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl bg-slate-900 px-4 py-3 text-sm text-white">
+          <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
+          <span className="flex-1">
+            <b>Match {active.number}</b> {IN_PLAY.includes(active.status) ? 'is live' : 'has finished — confirm the result'}. Only one match can be live at a time.
+          </span>
+          <Link to={`/matches/${active.id}/score`}><Button size="px-3 py-1.5 text-sm">{IN_PLAY.includes(active.status) ? 'Open scoring' : 'Confirm result'}</Button></Link>
+        </div>
+      )}
       {groups.map(([title, list]) => list.length > 0 && (
         <section key={title} className="mb-5">
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</h2>
-          <Card>{list.map((m) => <Row key={m.id} m={m} />)}</Card>
+          <Card>{list.map((m) => <Row key={m.id} m={m} activeOther={active && active.id !== m.id ? active : null} />)}</Card>
         </section>
       ))}
       {!data.matches.length && <Card className="p-6 text-center text-sm text-slate-500">No fixtures yet. Create teams, then add fixtures.</Card>}

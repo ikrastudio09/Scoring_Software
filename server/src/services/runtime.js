@@ -4,11 +4,12 @@
 // the next access replays the persisted events and arrives at exactly the same state.
 
 import { EVENT_TYPES, ERROR_CODES } from '@cricket/shared';
-import { Match, MatchEvent, Player, Team } from '../models/index.js';
-import { replay, toLiveView, toScorerView, toScorecard } from '../engine/index.js';
+import { CommentaryEdit, Match, MatchEvent, Player, Team } from '../models/index.js';
+import { buildCommentary, normalizeBonus, replay, toLiveView, toScorerView, toScorecard } from '../engine/index.js';
 import { KeyedMutex } from '../utils/async.js';
 import { AppError, notFound } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import { getTournament } from './tournament.js';
 
 const cache = new Map();
 const loading = new Map();
@@ -31,20 +32,26 @@ export function buildSetup(match) {
     battingFirst,
     bowlingFirst: battingFirst === a ? b : a,
     xi: { [a]: xiA, [b]: xiB },
+    // A tie outside the league stage is decided by a Super Over.
+    superOver: (match.stage || 'league') !== 'league',
   };
 }
 
 async function buildMeta(match) {
   const teamIds = [match.teamA, match.teamB].filter(Boolean);
   const playerIds = [...(match.playingXI?.teamA || []), ...(match.playingXI?.teamB || [])];
-  const [teams, players] = await Promise.all([
+  const [teams, players, t] = await Promise.all([
     Team.find({ _id: { $in: teamIds } }, 'name shortName color logoUrl').lean(),
     Player.find({ _id: { $in: playerIds } }, 'name').lean(),
+    getTournament(),
   ]);
+  // Bonus points only matter for matches that count toward the points table.
+  const counted = (t.points?.stages?.length ? t.points.stages : ['league']).includes(match.stage || 'league');
   return {
     matchId: String(match._id),
     teams: Object.fromEntries(teams.map((t) => [String(t._id), { name: t.name, shortName: t.shortName, color: t.color, logoUrl: t.logoUrl }])),
     players: Object.fromEntries(players.map((p) => [String(p._id), { name: p.name }])),
+    bonus: counted ? normalizeBonus(t.points?.bonus) : null,
   };
 }
 
@@ -74,9 +81,10 @@ export function undoLastEvent(target, seq) {
 async function load(matchId) {
   const match = await Match.findById(matchId).lean();
   if (!match) throw notFound('Match');
-  const [meta, events] = await Promise.all([
+  const [meta, events, edits] = await Promise.all([
     buildMeta(match),
     MatchEvent.find({ match: match._id }).sort({ seq: 1 }).lean(),
+    CommentaryEdit.find({ match: match._id }, 'seq text').lean(),
   ]);
   const setup = buildSetup(match);
   const effective = resolveEffective(events);
@@ -102,6 +110,7 @@ async function load(matchId) {
     effective,
     lastSeq,
     clientIds: new Set(events.filter((e) => e.clientEventId).map((e) => e.clientEventId)),
+    commentaryEdits: new Map(edits.map((e) => [e.seq, e.text])),
     views: {},
   };
   logger.debug({ matchId: rt.id, events: events.length, version: lastSeq }, 'match runtime loaded');
@@ -178,4 +187,16 @@ export function scorecard(rt) {
   return memo(rt, 'scorecard', () => (rt.state
     ? decorate(rt, toScorecard(rt.state, rt.setup, rt.meta))
     : decorate(rt, { matchId: rt.id, state: 'NOT_READY', innings: [], result: null })));
+}
+
+/** Ball-by-ball commentary, oldest first (memoised per version; edits clear the memo). */
+export function commentary(rt) {
+  return memo(rt, 'commentary', () => (rt.state ? buildCommentary(rt.state, rt.setup, rt.meta, rt.commentaryEdits) : []));
+}
+
+/** The commentary entry of one delivery, or null. */
+export function commentaryEntry(rt, seq) {
+  const all = commentary(rt);
+  for (let i = all.length - 1; i >= 0; i--) if (all[i].seq === seq) return all[i];
+  return null;
 }

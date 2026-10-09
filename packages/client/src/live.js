@@ -54,12 +54,12 @@ export function createLiveConnection({ url = undefined, client = 'viewer', getTo
 
   socket.on(SOCKET_MESSAGE, (env) => {
     lastMessageAt = Date.now();
-    if (env.matchId && env.live !== undefined) {
+    if (env.matchId && (env.live !== undefined || env.type === SOCKET_EVENTS.COMMENTARY_UPDATED)) {
       for (const [key, sub] of subs) {
         if (key.endsWith(`:${env.matchId}`)) for (const h of sub.handlers) h(env);
       }
     }
-    if (!env.live || env.type === SOCKET_EVENTS.MATCH_STATUS_CHANGED) {
+    if ((!env.live && env.type !== SOCKET_EVENTS.COMMENTARY_UPDATED) || env.type === SOCKET_EVENTS.MATCH_STATUS_CHANGED) {
       for (const h of tournamentHandlers) h(env);
     }
   });

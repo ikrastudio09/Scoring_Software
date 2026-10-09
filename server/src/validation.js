@@ -1,6 +1,6 @@
 // Request schemas. Strict objects: unknown keys are rejected.
 import { z } from 'zod';
-import { DELIVERY_DISMISSALS, MATCH_STAGES, MATCH_STATUS, ROLES } from '@cricket/shared';
+import { DELIVERY_DISMISSALS, MATCH_STAGES, MATCH_STATUS, ROLES, SHOT_TYPES } from '@cricket/shared';
 
 export const objectId = z.string().regex(/^[a-f0-9]{24}$/i, 'must be a valid id');
 const color = z.string().regex(/^#[0-9a-f]{6}$/i, 'must be a #rrggbb colour');
@@ -44,7 +44,20 @@ export const tournamentSchema = z.strictObject({
     noResult: z.number().min(0).max(10),
     stages: z.array(z.enum(MATCH_STAGES)).min(1),
     nrrAllOutUsesFullQuota: z.boolean(),
+    tiebreakers: z.array(z.enum(['nrr', 'wins', 'headToHead'])).max(3),
+    bonus: z.strictObject({
+      enabled: z.boolean(),
+      points: z.number().min(0).max(5),
+      runsPercent: z.number().min(1).max(100),
+      oversPercent: z.number().min(1).max(100),
+    }).partial(),
   }).partial().optional(),
+  impactWeights: z.strictObject({
+    batting: z.partialRecord(z.enum(['run', 'four', 'six', 'fifty', 'hundred', 'runsAbovePar', 'duck']), z.number().min(-100).max(100)).optional(),
+    bowling: z.partialRecord(z.enum(['wicket', 'topOrderWicket', 'dot', 'maiden', 'threeWickets', 'runsSavedVsPar']), z.number().min(-100).max(100)).optional(),
+    fielding: z.partialRecord(z.enum(['catch', 'runOut', 'stumping']), z.number().min(-100).max(100)).optional(),
+    context: z.partialRecord(z.enum(['chaseWinPct', 'defendWinPct']), z.number().min(0).max(100)).optional(),
+  }).nullable().optional(),
 });
 
 // ── teams / players ──
@@ -56,6 +69,7 @@ export const teamSchema = z.strictObject({
   group: text(20).optional(),
   captain: objectId.nullable().optional(),
   homeGround: text(120).optional(),
+  teamID: z.number().int().positive().nullable().optional(),
 });
 export const teamUpdateSchema = teamSchema.partial();
 
@@ -68,6 +82,9 @@ export const playerSchema = z.strictObject({
   jerseyNumber: z.number().int().min(0).max(999).nullable().optional(),
   photoUrl: url.optional(),
   active: z.boolean().optional(),
+  playerID: z.number().int().positive().nullable().optional(),
+  playerType: text(40).optional(),
+  playingStyle: z.array(z.enum(['Right Arm Batting', 'Right Arm Balling', 'Left Arm Batting', 'Left Arm Balling'])).max(2).optional(),
 });
 export const playerUpdateSchema = playerSchema.partial();
 
@@ -115,6 +132,7 @@ export const deliverySchema = z.strictObject({
   runs: z.number().int().min(0).max(7),
   boundary: z.boolean().optional(),
   noBallRunsType: z.enum(['bat', 'bye', 'legbye']).optional(),
+  shot: z.enum(Object.keys(SHOT_TYPES)).optional(),
   wicket: z.strictObject({
     type: z.enum(DELIVERY_DISMISSALS),
     batterId: objectId.optional(),
@@ -131,4 +149,18 @@ export const concludeSchema = z.strictObject({
   ...command,
   resultType: z.enum(['no_result', 'abandoned', 'walkover']),
   winnerTeamId: objectId.optional(),
+});
+
+// ── commentary ──
+export const commentaryQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(300).optional(),
+  before: z.coerce.number().int().min(1).optional(),
+});
+export const commentaryEditSchema = z.strictObject({ text: z.string().max(500) });
+
+// ── auction import (rows are free-form; the import service validates every field) ──
+export const auctionImportSchema = z.strictObject({
+  players: z.array(z.record(z.string(), z.unknown())).max(5000),
+  teams: z.array(z.record(z.string(), z.unknown())).max(5000),
+  hash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 });

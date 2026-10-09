@@ -12,6 +12,7 @@ import MatchSetup from './pages/MatchSetup.jsx';
 import Fixtures from './pages/Fixtures.jsx';
 import Teams from './pages/Teams.jsx';
 import { TournamentSettings, Users, Tools } from './pages/Settings.jsx';
+import Import from './pages/Import.jsx';
 
 function Shell() {
   const { user, logout, isAdmin } = useAuth();
@@ -25,6 +26,7 @@ function Shell() {
           <NavLink to="/" end className={link}>Matches</NavLink>
           <NavLink to="/fixtures" className={link}>Fixtures</NavLink>
           <NavLink to="/teams" className={link}>Teams</NavLink>
+          {isAdmin && <NavLink to="/import" className={link}>Import</NavLink>}
           {isAdmin && <NavLink to="/settings" className={link}>Settings</NavLink>}
           {isAdmin && <NavLink to="/users" className={link}>Users</NavLink>}
           {isAdmin && <NavLink to="/system" className={link}>System</NavLink>}
@@ -54,6 +56,7 @@ createRoot(document.getElementById('root')).render(
               <Route path="fixtures" element={<Fixtures />} />
               <Route path="teams" element={<Teams />} />
               <Route path="settings" element={<TournamentSettings />} />
+              <Route path="import" element={<Import />} />
               <Route path="users" element={<Users />} />
               <Route path="system" element={<Tools />} />
               <Route path="matches/:id/setup" element={<MatchSetup />} />

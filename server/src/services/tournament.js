@@ -23,6 +23,8 @@ export async function updateTournament(patch) {
   // Flatten nested objects so a partial update never wipes sibling fields.
   const flatten = (obj, prefix = '') => {
     for (const [k, v] of Object.entries(obj)) {
+      // MVP weights are replaced as a whole (the settings form always sends the full set).
+      if (!prefix && k === 'impactWeights') { set.impactWeights = v; continue; }
       if (v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)) flatten(v, `${prefix}${k}.`);
       else set[`${prefix}${k}`] = v;
     }

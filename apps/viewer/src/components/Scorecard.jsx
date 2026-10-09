@@ -1,12 +1,15 @@
 import { Card, PlayerLink } from './ui.jsx';
 import { num } from '../lib/format.js';
+import BonusPoint from './BonusPoint.jsx';
+
+const inningsTitle = (inn) => (inn.superOver ? `${inn.battingTeamName} · Super Over${inn.superOver > 1 ? ` ${inn.superOver}` : ''}` : inn.battingTeamName);
 
 function Innings({ inn }) {
   const e = inn.extras;
   return (
     <Card className="overflow-hidden">
       <div className="flex items-center justify-between bg-slate-900 px-4 py-2.5 text-white">
-        <span className="font-semibold">{inn.battingTeamName}</span>
+        <span className="font-semibold">{inningsTitle(inn)}</span>
         <span className="tnum font-bold">{inn.runs}/{inn.wickets} <span className="text-sm font-normal text-slate-300">({inn.overs} ov)</span></span>
       </div>
 
@@ -88,7 +91,12 @@ function Innings({ inn }) {
 
 export default function Scorecard({ scorecard }) {
   if (!scorecard?.innings?.length) return <p className="py-8 text-center text-sm text-slate-500">Scorecard will appear once play starts.</p>;
-  return <div className="space-y-4">{scorecard.innings.map((inn) => <Innings key={inn.number} inn={inn} />)}</div>;
+  return (
+    <div className="space-y-4">
+      <BonusPoint bonus={scorecard.bonus} />
+      {scorecard.innings.map((inn) => <Innings key={inn.number} inn={inn} />)}
+    </div>
+  );
 }
 
 export function OversTable({ scorecard }) {
@@ -97,7 +105,7 @@ export function OversTable({ scorecard }) {
     <div className="space-y-4">
       {scorecard.innings.map((inn) => (
         <Card key={inn.number} className="p-4">
-          <p className="mb-3 font-semibold">{inn.battingTeamName}</p>
+          <p className="mb-3 font-semibold">{inningsTitle(inn)}</p>
           <div className="space-y-2">
             {inn.overByOver.map((o) => (
               <div key={o.over} className="flex items-center gap-3 text-sm">

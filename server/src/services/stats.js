@@ -3,8 +3,9 @@
 
 import { SOCKET_EVENTS, average, economy, strikeRate, formatOvers } from '@cricket/shared';
 import { Match, Player, PlayerMatchStat, Team } from '../models/index.js';
-import { extractPlayerStats } from '../engine/index.js';
+import { extractPlayerStats, impactContext, mergeWeights, scoreImpact } from '../engine/index.js';
 import { getRuntime } from './runtime.js';
+import { getTournament } from './tournament.js';
 import { invalidatePoints } from './points.js';
 import { publishTournament } from '../realtime/hub.js';
 import { logger } from '../utils/logger.js';
@@ -26,6 +27,7 @@ export async function rebuildMatchStats(matchId) {
   // play still count toward individual statistics, as is standard).
   if (!m.result?.confirmed || !rt.state || !rt.state.innings.length) return 0;
   const teams = [rt.setup.battingFirst, rt.setup.bowlingFirst];
+  const ctx = impactContext(rt.state, rt.setup);
   const rows = extractPlayerStats(rt.state, rt.setup).map((r) => ({
     match: m._id,
     player: r.playerId,
@@ -37,6 +39,7 @@ export async function rebuildMatchStats(matchId) {
     batting: r.batting,
     bowling: r.bowling,
     fielding: r.fielding,
+    context: ctx[r.playerId],
     playerOfMatch: m.result.playerOfMatch ? String(m.result.playerOfMatch) === r.playerId : false,
     ballsPerOver: rt.setup.rules.ballsPerOver,
   }));
@@ -75,10 +78,12 @@ export async function rebuildAllStats() {
 function emptyCareer(p) {
   return {
     playerId: String(p._id), name: p.name, team: p.team ? String(p.team) : null, role: p.role,
-    matches: 0, playerOfMatch: 0,
-    batting: { innings: 0, runs: 0, balls: 0, outs: 0, notOuts: 0, fours: 0, sixes: 0, fifties: 0, hundreds: 0, thirties: 0, ducks: 0, highest: null },
-    bowling: { innings: 0, legalBalls: 0, runs: 0, wickets: 0, maidens: 0, dots: 0, wides: 0, noBalls: 0, threeWickets: 0, best: null },
+    photoUrl: p.photoUrl || null, soldPoints: p.auction?.status === 'sold' ? (p.auction.soldPoints ?? 0) : null,
+    matches: 0, playerOfMatch: 0, mvpAwards: 0,
+    batting: { innings: 0, runs: 0, balls: 0, outs: 0, notOuts: 0, fours: 0, sixes: 0, dots: 0, fifties: 0, hundreds: 0, thirties: 0, ducks: 0, highest: null },
+    bowling: { innings: 0, legalBalls: 0, runs: 0, wickets: 0, maidens: 0, dots: 0, wides: 0, noBalls: 0, foursConceded: 0, sixesConceded: 0, threeWickets: 0, best: null },
     fielding: { catches: 0, runOuts: 0, stumpings: 0 },
+    impact: { total: 0, batting: 0, bowling: 0, fielding: 0, context: 0 },
     bpo: 6,
   };
 }
@@ -87,6 +92,8 @@ function addRow(c, r) {
   c.matches += 1;
   c.bpo = r.ballsPerOver || 6;
   if (r.playerOfMatch) c.playerOfMatch += 1;
+  if (r.mvpRank === 1) c.mvpAwards += 1;
+  if (r.impact) for (const k of Object.keys(c.impact)) c.impact[k] += r.impact[k];
   if (r.batting) {
     const b = r.batting;
     const s = c.batting;
@@ -95,6 +102,7 @@ function addRow(c, r) {
     s.balls += b.balls;
     s.fours += b.fours;
     s.sixes += b.sixes;
+    s.dots += b.dots || 0;
     if (b.out) s.outs += 1; else s.notOuts += 1;
     if (b.runs >= 100) s.hundreds += 1; else if (b.runs >= 50) s.fifties += 1; else if (b.runs >= 30) s.thirties += 1;
     if (b.out && b.runs === 0) s.ducks += 1;
@@ -113,6 +121,8 @@ function addRow(c, r) {
     s.dots += b.dots;
     s.wides += b.wides;
     s.noBalls += b.noBalls;
+    s.foursConceded += b.foursConceded || 0;
+    s.sixesConceded += b.sixesConceded || 0;
     if (b.wickets >= 3) s.threeWickets += 1;
     if (!s.best || b.wickets > s.best.wickets || (b.wickets === s.best.wickets && b.runs < s.best.runs)) {
       s.best = { wickets: b.wickets, runs: b.runs, match: String(r.match) };
@@ -125,11 +135,22 @@ function addRow(c, r) {
   }
 }
 
+const pct = (n, d) => (d ? Math.round((n / d) * 1000) / 10 : null);
+const r1 = (n) => Math.round(n * 10) / 10;
+
 function finalize(c) {
   const b = c.batting;
   const w = c.bowling;
   b.average = average(b.runs, b.outs);
   b.strikeRate = strikeRate(b.runs, b.balls);
+  b.dotPct = pct(b.dots, b.balls);
+  b.boundaryPct = pct(b.fours + b.sixes, b.balls); // % of balls faced hit for 4 or 6
+  w.dotPct = pct(w.dots, w.legalBalls);
+  w.boundariesConceded = w.foursConceded + w.sixesConceded;
+  for (const k of Object.keys(c.impact)) c.impact[k] = r1(c.impact[k]);
+  c.impactPerMatch = c.matches ? r1(c.impact.total / c.matches) : 0;
+  // Secondary analytics only - never used for ranking MVP.
+  c.valuePer100k = c.soldPoints ? Math.round((c.impact.total / (c.soldPoints / 100000)) * 100) / 100 : null;
   b.highestText = b.highest ? `${b.highest.runs}${b.highest.out ? '' : '*'}` : '-';
   w.overs = formatOvers(w.legalBalls, c.bpo);
   w.economy = economy(w.runs, w.legalBalls, c.bpo);
@@ -139,12 +160,31 @@ function finalize(c) {
   return c;
 }
 
+/** Impact of every row with the current weights, and each match's MVP ranking. */
+export function rankMatches(rows, weights) {
+  const byMatch = new Map();
+  for (const r of rows) {
+    r.impact = scoreImpact(r, weights);
+    const k = String(r.match);
+    if (!byMatch.has(k)) byMatch.set(k, []);
+    byMatch.get(k).push(r);
+  }
+  for (const list of byMatch.values()) {
+    list.sort((a, b) => b.impact.total - a.impact.total || String(a.player).localeCompare(String(b.player)));
+    list.forEach((r, i) => { r.mvpRank = i + 1; });
+  }
+  return byMatch;
+}
+
 async function build() {
-  const [rows, players, teams] = await Promise.all([
+  const [rows, players, teams, t] = await Promise.all([
     PlayerMatchStat.find({}).lean(),
-    Player.find({}, 'name team role').lean(),
+    Player.find({}, 'name team role photoUrl auction').lean(),
     Team.find({}, 'name shortName color').lean(),
+    getTournament(),
   ]);
+  const weights = mergeWeights(t.impactWeights);
+  rankMatches(rows, weights);
   const teamMap = Object.fromEntries(teams.map((t) => [String(t._id), { id: String(t._id), name: t.name, shortName: t.shortName, color: t.color }]));
   const careers = new Map(players.map((p) => [String(p._id), emptyCareer(p)]));
   const innings = [];
@@ -159,7 +199,10 @@ async function build() {
   }
   const all = [...careers.values()].map(finalize);
   const named = (x) => ({ ...x, name: careers.get(x.playerId)?.name, teamInfo: teamMap[x.team] || teamMap[careers.get(x.playerId)?.team] });
-  const line = (c) => ({ playerId: c.playerId, name: c.name, team: c.team, teamInfo: teamMap[c.team], matches: c.matches, batting: c.batting, bowling: c.bowling, fielding: c.fielding, playerOfMatch: c.playerOfMatch });
+  const line = (c) => ({
+    playerId: c.playerId, name: c.name, team: c.team, teamInfo: teamMap[c.team], matches: c.matches, batting: c.batting, bowling: c.bowling,
+    fielding: c.fielding, playerOfMatch: c.playerOfMatch, impact: c.impact, mvpAwards: c.mvpAwards,
+  });
   const top = (arr, filter, sort, n = 10) => arr.filter(filter).sort(sort).slice(0, n).map(line);
 
   cache = {
@@ -178,7 +221,19 @@ async function build() {
       mostCatches: top(all, (c) => c.fielding.catches > 0, (a, b) => b.fielding.catches - a.fielding.catches),
       mostDots: top(all, (c) => c.bowling.dots > 0, (a, b) => b.bowling.dots - a.bowling.dots),
       mostPlayerOfMatch: top(all, (c) => c.playerOfMatch > 0, (a, b) => b.playerOfMatch - a.playerOfMatch),
+      mostImpact: top(all, (c) => c.impact.total > 0, (a, b) => b.impact.total - a.impact.total, 5),
     },
+    // Tournament MVP table: every player who has played, ranked by total impact.
+    mvp: all.filter((c) => c.matches > 0)
+      .sort((a, b) => b.impact.total - a.impact.total || b.mvpAwards - a.mvpAwards || a.name.localeCompare(b.name))
+      .map((c, i) => ({
+        rank: i + 1, playerId: c.playerId, name: c.name, photoUrl: c.photoUrl, team: c.team, teamInfo: teamMap[c.team], matches: c.matches,
+        impact: c.impact, impactPerMatch: c.impactPerMatch, mvpAwards: c.mvpAwards, playerOfMatch: c.playerOfMatch,
+        runs: c.batting.runs, strikeRate: c.batting.strikeRate, wickets: c.bowling.wickets, economy: c.bowling.economy,
+        fielding: c.fielding.catches + c.fielding.runOuts + c.fielding.stumpings,
+        soldPoints: c.soldPoints, valuePer100k: c.valuePer100k,
+      })),
+    weights,
     qualify: QUALIFY,
     totals: {
       matches: new Set(rows.map((r) => String(r.match))).size,
@@ -197,17 +252,84 @@ export async function getLeaderboards() {
   return { builtAt: c.builtAt, qualify: c.qualify, totals: c.totals, ...c.leaderboards };
 }
 
+export const VALUE_MIN_MATCHES = 2;
+
+/** Tournament MVP leaderboard + value-for-money (secondary analytics, never part of the ranking). */
+export async function getMvpTable() {
+  const c = cache || await build();
+  const value = c.mvp
+    .filter((r) => r.valuePer100k !== null && r.matches >= VALUE_MIN_MATCHES)
+    .sort((a, b) => b.valuePer100k - a.valuePer100k)
+    .slice(0, 20);
+  return { builtAt: c.builtAt, weights: c.weights, players: c.mvp, valueForMoney: value, valueMinMatches: VALUE_MIN_MATCHES };
+}
+
 export async function getPlayerCareer(playerId) {
   const c = cache || await build();
   const career = c.careers.get(String(playerId));
   const matches = await PlayerMatchStat.find({ player: playerId }).sort({ matchNumber: 1 }).populate('opponent', 'name shortName').lean();
+  const rank = c.mvp.find((r) => r.playerId === String(playerId))?.rank ?? null;
   return {
-    career: career || null,
+    career: career ? { ...career, mvpRank: rank } : null,
     matches: matches.map((r) => ({
+      impact: scoreImpact(r, c.weights).total,
       match: String(r.match), matchNumber: r.matchNumber, date: r.matchDate,
       opponent: r.opponent ? { id: String(r.opponent._id), name: r.opponent.name, shortName: r.opponent.shortName } : null,
       batting: r.batting, bowling: r.bowling && { ...r.bowling, overs: formatOvers(r.bowling.legalBalls, r.ballsPerOver || 6) },
       fielding: r.fielding, playerOfMatch: r.playerOfMatch,
     })),
+  };
+}
+
+/** Match MVP ranking from the authoritative state (live during the match, final once completed). */
+export async function getMatchMvp(matchId, limit = 5) {
+  const rt = await getRuntime(matchId);
+  if (!rt.state || !rt.state.innings.length) return { matchId: rt.id, final: false, players: [] };
+  const t = await getTournament();
+  const key = `mvp:${limit}`;
+  const hit = rt.views[key];
+  if (hit && hit.version === rt.lastSeq && hit.weights === t.impactWeights) return hit.value;
+  const weights = mergeWeights(t.impactWeights);
+  const ctx = impactContext(rt.state, rt.setup);
+  const ranked = extractPlayerStats(rt.state, rt.setup)
+    .map((r) => ({ ...r, impact: scoreImpact({ ...r, context: ctx[r.playerId] }, weights) }))
+    .sort((a, b) => b.impact.total - a.impact.total || a.playerId.localeCompare(b.playerId))
+    .slice(0, limit);
+  const bpo = rt.setup.rules.ballsPerOver;
+  const value = {
+    matchId: rt.id,
+    final: rt.state.status === 'COMPLETED',
+    players: ranked.map((r, i) => ({
+      rank: i + 1,
+      playerId: r.playerId,
+      name: rt.meta.players[r.playerId]?.name,
+      team: r.teamId,
+      teamInfo: rt.meta.teams[r.teamId],
+      impact: r.impact,
+      batting: r.batting && { runs: r.batting.runs, balls: r.batting.balls, fours: r.batting.fours, sixes: r.batting.sixes, out: r.batting.out },
+      bowling: r.bowling && { wickets: r.bowling.wickets, runs: r.bowling.runs, overs: formatOvers(r.bowling.legalBalls, bpo) },
+      fielding: r.fielding,
+    })),
+  };
+  rt.views[key] = { version: rt.lastSeq, weights: t.impactWeights, value };
+  return value;
+}
+
+/** Team-level batting / bowling aggregates and the squad's leaders, from the cached careers. */
+export async function getTeamStats(teamId) {
+  const c = cache || await build();
+  const id = String(teamId);
+  const squad = [...c.careers.values()].filter((p) => p.team === id && p.matches > 0);
+  const sum = (f) => squad.reduce((s, p) => s + f(p), 0);
+  const bpo = squad[0]?.bpo || 6;
+  const balls = sum((p) => p.bowling.legalBalls);
+  const brief = (p) => ({ playerId: p.playerId, name: p.name, photoUrl: p.photoUrl, matches: p.matches, runs: p.batting.runs, strikeRate: p.batting.strikeRate, wickets: p.bowling.wickets, economy: p.bowling.economy, impact: p.impact.total });
+  return {
+    batting: { runs: sum((p) => p.batting.runs), balls: sum((p) => p.batting.balls), fours: sum((p) => p.batting.fours), sixes: sum((p) => p.batting.sixes), fifties: sum((p) => p.batting.fifties + p.batting.hundreds) },
+    bowling: { wickets: sum((p) => p.bowling.wickets), runs: sum((p) => p.bowling.runs), overs: formatOvers(balls, bpo), economy: economy(sum((p) => p.bowling.runs), balls, bpo), maidens: sum((p) => p.bowling.maidens), dots: sum((p) => p.bowling.dots) },
+    fielding: { catches: sum((p) => p.fielding.catches), runOuts: sum((p) => p.fielding.runOuts), stumpings: sum((p) => p.fielding.stumpings) },
+    topBatters: [...squad].sort((a, b) => b.batting.runs - a.batting.runs).slice(0, 3).filter((p) => p.batting.runs > 0).map(brief),
+    topBowlers: [...squad].sort((a, b) => b.bowling.wickets - a.bowling.wickets || (a.bowling.economy ?? 99) - (b.bowling.economy ?? 99)).slice(0, 3).filter((p) => p.bowling.wickets > 0).map(brief),
+    mvp: [...squad].sort((a, b) => b.impact.total - a.impact.total).slice(0, 3).map(brief),
   };
 }

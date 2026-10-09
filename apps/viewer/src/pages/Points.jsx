@@ -5,6 +5,7 @@ import { useApi } from '@cricket/client';
 import { api, live } from '../lib/runtime.js';
 import { Card, ErrorState, Spinner, TeamLogo } from '../components/ui.jsx';
 
+const TIEBREAK = { nrr: 'net run rate', wins: 'wins', headToHead: 'head-to-head' };
 const FORM = { W: 'bg-emerald-500', L: 'bg-red-500', T: 'bg-slate-400', N: 'bg-slate-300' };
 
 export default function Points() {
@@ -26,6 +27,7 @@ export default function Points() {
                   <th className="w-8 py-2 pl-4 text-left font-medium">#</th>
                   <th className="text-left font-medium">Team</th>
                   {['P', 'W', 'L', 'T', 'NR'].map((h, i) => <th key={h} className={`w-8 text-center font-medium ${i > 2 ? 'hidden sm:table-cell' : ''}`}>{h}</th>)}
+                  {r.bonus?.enabled && <th className="hidden w-8 text-center font-medium sm:table-cell" title="Bonus points">BP</th>}
                   <th className="w-12 text-center font-semibold text-slate-700">Pts</th>
                   <th className="w-16 pr-4 text-right font-medium sm:pr-0">NRR</th>
                   <th className="hidden w-28 pr-4 text-right font-medium sm:table-cell">Form</th>
@@ -44,6 +46,7 @@ export default function Points() {
                       </Link>
                     </td>
                     {[row.played, row.won, row.lost, row.tied, row.noResult].map((v, i) => <td key={i} className={`text-center tnum ${i > 2 ? 'hidden sm:table-cell' : ''}`}>{v}</td>)}
+                    {r.bonus?.enabled && <td className="hidden text-center tnum sm:table-cell">{row.bonus}</td>}
                     <td className="text-center font-bold tnum">{row.points}</td>
                     <td className={`pr-4 text-right tnum sm:pr-0 ${row.nrr > 0 ? 'text-emerald-700' : row.nrr < 0 ? 'text-red-600' : ''}`}>{formatNrr(row.nrr)}</td>
                     <td className="hidden pr-4 sm:table-cell">
@@ -57,7 +60,8 @@ export default function Points() {
         </Card>
       ))}
       <p className="text-xs text-slate-500">
-        Win {r.win} · Tie {r.tie} · No result {r.noResult} · Loss {r.loss} points. Sorted by points, then net run rate.
+        Win {r.win} · Tie {r.tie} · No result {r.noResult} · Loss {r.loss} points.
+        {r.bonus?.enabled && ` +${r.bonus.points} bonus for a win that holds the chase below ${r.bonus.runsPercent}% of the target or chases it within ${r.bonus.oversPercent}% of the overs.`} Sorted by points, then {(r.tiebreakers || ['nrr', 'wins']).map((k) => TIEBREAK[k]).join(', then ')}.
         {r.nrrAllOutUsesFullQuota && ' A side bowled out is charged its full quota of overs for NRR.'}
       </p>
     </div>

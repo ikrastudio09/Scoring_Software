@@ -43,6 +43,8 @@ const matchSchema = new mongoose.Schema({
     marginRuns: Number,
     marginWickets: Number,
     ballsRemaining: Number,
+    // Scores were level and a Super Over decided the winner.
+    superOver: Boolean,
     text: String,
     confirmed: { type: Boolean, default: false },
     confirmedAt: Date,

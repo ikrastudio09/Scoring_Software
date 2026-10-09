@@ -78,3 +78,54 @@ export function useApi(api, path, deps = []) {
   useEffect(() => { load(); }, [load]);
   return { data, error, loading, reload: load, setData };
 }
+
+/**
+ * Ball-by-ball commentary, newest first. One REST page on open, then each new delivery arrives in
+ * the `ball` block of the socket envelope. A gap in versions (missed message, reconnect) or an
+ * undo triggers a REST refetch — the feed is never rebuilt by replaying the match.
+ */
+export function useCommentary({ api, live: conn, matchId, channel = 'viewer', limit = 30 }) {
+  const [entries, setEntries] = useState(null);
+  const versionRef = useRef(null); // version the list reflects
+  const seenRef = useRef(0); // highest version seen on the socket
+  const loadingRef = useRef(false);
+
+  const load = useCallback(async () => {
+    if (!matchId || loadingRef.current) return;
+    loadingRef.current = true;
+    try {
+      const d = await api.get(`/matches/${matchId}/commentary?limit=${limit}`);
+      versionRef.current = d.version;
+      setEntries(d.entries);
+    } catch { /* keep what we have; the next event retries */ } finally {
+      loadingRef.current = false;
+    }
+    if (seenRef.current > (versionRef.current ?? 0)) load();
+  }, [api, matchId, limit]);
+
+  useEffect(() => {
+    if (!matchId) return undefined;
+    versionRef.current = null;
+    seenRef.current = 0;
+    setEntries(null);
+    load();
+    return conn.subscribe(matchId, channel, (env) => {
+      if (env.type === 'COMMENTARY_UPDATED') {
+        setEntries((list) => list && list.map((e) => (e.seq === env.entry.seq ? env.entry : e)));
+        return;
+      }
+      seenRef.current = Math.max(seenRef.current, env.version);
+      const v = versionRef.current;
+      if (v === null || env.version <= v) return; // not loaded yet (load re-checks) or stale
+      if (env.version !== v + 1 || env.effects?.includes('UNDO')) { load(); return; }
+      versionRef.current = env.version;
+      if (env.ball) {
+        const entry = { milestones: [], edited: false, ...env.ball };
+        setEntries((list) => [entry, ...(list || []).filter((e) => e.seq !== entry.seq)].slice(0, limit * 3));
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchId, channel, conn]);
+
+  return { entries, reload: load, setEntries };
+}

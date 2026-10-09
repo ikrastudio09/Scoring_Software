@@ -24,7 +24,17 @@ npm run dev:admin  /  dev:viewer  /  dev:led    # Vite dev servers (5174 / 5173 
 
 Or build once and let the server host everything on :4000: `npm run build && npm start`.
 
+## Before the tournament: import the auction data
+
+**Admin → Import**: choose the players and teams files exported from the auction system (JSON,
+CSV or XLSX — see `data/auction.example.json`). The server validates IDs, player→team mapping
+(by `playerID` → `teamID`, never by name), statuses and auction values, shows a preview, and
+writes nothing until you confirm. Phone numbers and ages are never imported. Re-importing the
+same file changes nothing. The auction system is not needed during matches.
+
 ## Scoring a match (match day)
+
+Only **one match can be live at a time**. Confirm the previous result before starting the next.
 
 1. **Admin → Matches → Toss & XIs**: record the toss and tick each playing XI.
 2. **Start innings**: openers and opening bowler.
@@ -32,6 +42,8 @@ Or build once and let the server host everything on :4000: `npm run build && npm
    the runs. `WICKET` (`X`) opens the dismissal dialog. The console then asks for the new batter
    or the next bowler (unavailable bowlers are greyed out with the reason).
 4. **Undo** (`U` or Ctrl+Z) reverts the last action exactly; the original stays in the event log.
+   An optional **Shot** chip (drive, pull, …) adds colour to the generated commentary; the
+   **Commentary** tab (or *Edit* on the last ball) lets you reword any ball.
 5. Innings and match end automatically (overs, all out, target). **Confirm result** (with Player
    of the Match) to update the points table and statistics.
 6. Rain? **More… → Conclude match → No result**. Injury mid-over? **More… → Change bowler**.
@@ -39,6 +51,9 @@ Or build once and let the server host everything on :4000: `npm run build && npm
 If the network drops, the console shows **"Not yet confirmed"**, keeps the action and retries it
 with the same id until the server confirms it — it is recorded exactly once. Closing or crashing
 the laptop loses nothing: reopen the console and it resumes from the server's state.
+
+Viewers (website, installable PWA, Android app) and the LED receive **every ball** with local,
+deterministic commentary. `GET /api/live` returns the current match for anyone joining mid-over.
 
 Put the LED page (`/led/` follows the live match automatically, or `/led/?match=<id>`) on the
 screen in full-screen mode (F11).

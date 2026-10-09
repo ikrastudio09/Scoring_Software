@@ -14,11 +14,14 @@ const playerMatchStatSchema = new mongoose.Schema({
   batting: { type: mongoose.Schema.Types.Mixed, default: null },
   bowling: { type: mongoose.Schema.Types.Mixed, default: null },
   fielding: { catches: Number, runOuts: Number, stumpings: Number },
+  // Match facts used by the impact (MVP) formula; see engine/impact.js.
+  context: { type: mongoose.Schema.Types.Mixed, default: null },
   playerOfMatch: { type: Boolean, default: false },
   ballsPerOver: { type: Number, default: 6 },
 }, { versionKey: false });
 
 playerMatchStatSchema.index({ match: 1, player: 1 }, { unique: true });
 playerMatchStatSchema.index({ player: 1 });
+playerMatchStatSchema.index({ team: 1 });
 
 export const PlayerMatchStat = mongoose.model('PlayerMatchStat', playerMatchStatSchema);

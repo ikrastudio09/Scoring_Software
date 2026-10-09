@@ -10,7 +10,10 @@ import { invalidateTournamentCache, updateTournament } from '../../src/services/
 import { invalidateRuntime } from '../../src/services/runtime.js';
 import { invalidatePoints } from '../../src/services/points.js';
 import { invalidateStats } from '../../src/services/stats.js';
-import { SOCKET_MESSAGE, SOCKET_SUBSCRIBE } from '@cricket/shared';
+import { EVENT_TYPES, IN_PLAY_STATUSES, SOCKET_MESSAGE, SOCKET_SUBSCRIBE } from '@cricket/shared';
+import { Match } from '../../src/models/index.js';
+import { executeCommand } from '../../src/services/scoring.js';
+import { confirmResult } from '../../src/services/matches.js';
 
 const BASE = process.env.MONGODB_TEST_URI || 'mongodb://127.0.0.1:27017';
 
@@ -48,8 +51,29 @@ export function clearCaches() {
 
 export const auth = (token) => ({ Authorization: `Bearer ${token}` });
 
+/**
+ * Only one match may be live at a time, so tests that leave a match in play close it (through the
+ * real services: conclude as no result, then confirm) before the next one is seeded.
+ */
+export async function finishActiveMatches() {
+  const SYSTEM = { id: 'test', username: 'test-harness' };
+  const open = await Match.find({
+    $or: [
+      { status: { $in: IN_PLAY_STATUSES } },
+      { status: { $in: ['COMPLETED', 'ABANDONED'] }, 'result.confirmed': { $ne: true }, stateVersion: { $gt: 0 } },
+    ],
+  }, '_id status').lean();
+  for (const m of open) {
+    if (IN_PLAY_STATUSES.includes(m.status)) {
+      await executeCommand(m._id, { type: EVENT_TYPES.CONCLUDE, payload: { resultType: 'no_result' } }, SYSTEM);
+    }
+    await confirmResult(m._id, {}, SYSTEM);
+  }
+}
+
 /** Create a tournament with two teams of `xi` players and one ready match. */
 export async function seedMatch(ctx, { overs = 2, maxOversPerBowler = 1, xi = 11, tossWinner = 'A', decision = 'bat', teams } = {}) {
+  await finishActiveMatches();
   await updateTournament({ name: 'Test Cup', rules: { oversPerInnings: overs, maxOversPerBowler, playersPerSide: 11 } });
   const admin = auth(ctx.adminToken);
   let A;
