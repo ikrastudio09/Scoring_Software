@@ -173,8 +173,12 @@ test.describe('viewer website', () => {
     page.on('pageerror', (e) => errors.push(e.message));
     page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
+    // Landing page: the three categories; open Men's.
     await page.goto('/');
     await expect(page.getByRole('heading', { name: 'Premier Cricket League' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Ladies' })).toBeVisible();
+    await page.getByRole('link', { name: "Open Men's →" }).click();
+    await expect(page).toHaveURL(/\/mens$/);
     await expect(page.getByText('Recent results')).toBeVisible();
 
     await page.getByRole('link', { name: 'Table', exact: true }).click();
@@ -186,16 +190,18 @@ test.describe('viewer website', () => {
 
     await page.getByRole('link', { name: 'Matches', exact: true }).first().click();
     await page.getByRole('tab', { name: 'Results' }).click();
-    await page.locator('a[href^="/matches/"]').first().click();
+    await page.locator('a[href^="/mens/matches/"]').first().click();
     await page.getByRole('tab', { name: 'Scorecard' }).click();
     await expect(page.getByText('Fall of wickets').first()).toBeVisible();
     await page.getByRole('tab', { name: 'Overs' }).click();
 
+    // A link from before categories redirects to the remembered category.
     await page.goto('/teams');
-    await page.locator('a[href^="/teams/"]').first().click();
+    await expect(page).toHaveURL(/\/mens\/teams$/);
+    await page.locator('a[href^="/mens/teams/"]').first().click();
     await expect(page.getByRole('heading', { name: 'Squad' })).toBeVisible();
-    await page.locator('a[href^="/players/"]').first().click();
-    await expect(page.getByRole('heading', { name: /Batting|No matches/ }).or(page.getByText('No matches played yet.'))).toBeVisible();
+    await page.locator('a[href^="/mens/players/"]').first().click();
+    await expect(page.getByRole('heading', { name: /batting/i }).or(page.getByText('No matches played this season yet.'))).toBeVisible();
 
     // no horizontal page overflow on a phone
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);

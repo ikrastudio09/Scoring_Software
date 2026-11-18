@@ -35,7 +35,7 @@ export default function MatchSetup() {
   const nav = useNavigate();
   const toast = useToast();
   const { data, error, reload } = useApi(api, `/matches/${id}`, [id]);
-  const t = useApi(api, '/tournament');
+  const cat = useApi(api, data?.match?.category ? `/categories/${data.match.category}` : null, [data?.match?.category]);
   const m = data?.match;
   const squadA = useApi(api, m?.teamA?.id ? `/teams/${m.teamA.id}` : null, [m?.teamA?.id]);
   const squadB = useApi(api, m?.teamB?.id ? `/teams/${m.teamB.id}` : null, [m?.teamB?.id]);
@@ -44,7 +44,7 @@ export default function MatchSetup() {
   const [xiB, setXiB] = useState([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
-  const max = t.data?.tournament.rules.playersPerSide || 11;
+  const max = cat.data?.category.effective.rules.playersPerSide || 11;
 
   useEffect(() => {
     if (!m) return;

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { MATCH_STAGES } from '@cricket/shared';
 import { useApi } from '@cricket/client';
 import { api } from '../lib/runtime.js';
+import { useCategory } from '../lib/category.jsx';
 import { Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner, Textarea, useToast } from '../components/ui.jsx';
 
 const n = (v) => (v === '' ? undefined : Number(v));
@@ -40,6 +41,73 @@ function ImpactWeights({ weights, setWeights, onReset }) {
           </div>
         </div>
       ))}
+    </Card>
+  );
+}
+
+const CATEGORY_FIELDS = [
+  ['rules', 'oversPerInnings', 'Overs per innings'],
+  ['rules', 'maxOversPerBowler', 'Max overs per bowler'],
+  ['rules', 'ballsPerOver', 'Balls per over'],
+  ['rules', 'playersPerSide', 'Max players per side'],
+  ['rules', 'wideRuns', 'Wide penalty runs'],
+  ['rules', 'noBallRuns', 'No-ball penalty runs'],
+  ['points', 'win', 'Points for a win'],
+  ['points', 'tie', 'Points for a tie'],
+  ['points', 'noResult', 'Points for no result'],
+  ['qualification', 'slots', 'Teams that qualify'],
+  ['leaderboards', 'strikeRateMinBalls', 'Strike-rate list: min balls'],
+  ['leaderboards', 'economyMinBalls', 'Economy list: min balls'],
+  ['leaderboards', 'averageMinInnings', 'Average list: min innings'],
+  ['leaderboards', 'capMinMatches', 'Orange / Purple Cap: min matches'],
+];
+
+/**
+ * Settings of the selected category (Men's / Ladies / Kids). A blank field uses the season default
+ * shown as the placeholder; only the values entered here are stored as overrides.
+ */
+function CategorySettings() {
+  const toast = useToast();
+  const { key, category } = useCategory();
+  const { data, reload } = useApi(api, `/categories/${key}`, [key]);
+  const [f, setF] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    if (!data) return;
+    const o = data.category.overrides;
+    setF(Object.fromEntries(CATEGORY_FIELDS.map(([g, k]) => [`${g}.${k}`, o[g]?.[k] ?? ''])));
+  }, [data]);
+  if (!data || !f) return null;
+  const eff = data.category.effective;
+  const o = data.category.overrides;
+  const save = async () => {
+    setErr(null);
+    const body = {};
+    for (const g of ['rules', 'points', 'qualification', 'leaderboards']) {
+      const vals = Object.fromEntries(CATEGORY_FIELDS.filter(([gg]) => gg === g).map(([, k]) => [k, n(f[`${g}.${k}`])]).filter(([, v]) => v !== undefined));
+      // Points overrides keep the category's other point settings (stages, bonus, …).
+      body[g] = Object.keys(vals).length ? (g === 'points' ? { ...o.points, ...vals } : vals) : (g === 'points' && Object.keys(o.points || {}).length ? o.points : null);
+    }
+    try {
+      await api.put(`/categories/${key}`, body);
+      toast(`${category?.name} settings saved`, 'success');
+      reload();
+    } catch (e) { setErr(e); }
+  };
+  return (
+    <Card className="space-y-3 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-semibold">{category?.name} settings <span className="text-sm font-normal text-slate-500">(blank = season default below)</span></h2>
+        <Button size="px-3 py-1.5 text-sm" onClick={save}>Save {category?.name}</Button>
+      </div>
+      <ErrorBox error={err} />
+      <div className="grid gap-3 sm:grid-cols-3">
+        {CATEGORY_FIELDS.map(([g, k, label]) => (
+          <Field key={`${g}.${k}`} label={label}>
+            <Input type="number" min="0" value={f[`${g}.${k}`]} placeholder={String(eff[g]?.[k] ?? '')} onChange={(e) => setF({ ...f, [`${g}.${k}`]: e.target.value })} />
+          </Field>
+        ))}
+      </div>
     </Card>
   );
 }
@@ -89,6 +157,7 @@ export function TournamentSettings() {
     <div className="mx-auto max-w-3xl space-y-4">
       <PageHeader title="Tournament settings"><Button onClick={save}>Save</Button></PageHeader>
       <ErrorBox error={err} />
+      <CategorySettings />
       <Card className="grid gap-3 p-4 sm:grid-cols-2">
         <h2 className="font-semibold sm:col-span-2">Branding</h2>
         <Field label="Name"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
@@ -101,7 +170,7 @@ export function TournamentSettings() {
         <Field label="Venues (one per line)" className="sm:col-span-2"><Textarea value={f.venuesText} onChange={(e) => setF({ ...f, venuesText: e.target.value })} /></Field>
       </Card>
       <Card className="grid gap-3 p-4 sm:grid-cols-3">
-        <h2 className="font-semibold sm:col-span-3">Playing rules <span className="text-sm font-normal text-slate-500">(defaults for new fixtures; a fixture keeps the rules it was created with)</span></h2>
+        <h2 className="font-semibold sm:col-span-3">Playing rules — season default <span className="text-sm font-normal text-slate-500">(all categories unless overridden above; a fixture keeps the rules it was created with)</span></h2>
         <Field label="Overs per innings"><Input type="number" min="1" value={r.oversPerInnings} onChange={(e) => setRule('oversPerInnings', e.target.value)} /></Field>
         <Field label="Max overs per bowler"><Input type="number" min="1" value={r.maxOversPerBowler} onChange={(e) => setRule('maxOversPerBowler', e.target.value)} /></Field>
         <Field label="Balls per over"><Input type="number" min="4" max="8" value={r.ballsPerOver} onChange={(e) => setRule('ballsPerOver', e.target.value)} /></Field>
@@ -111,7 +180,7 @@ export function TournamentSettings() {
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(r.freeHit)} onChange={(e) => setRule('freeHit', e.target.checked)} /> Free hit after a no-ball</label>
       </Card>
       <Card className="grid gap-3 p-4 sm:grid-cols-4">
-        <h2 className="font-semibold sm:col-span-4">Points table</h2>
+        <h2 className="font-semibold sm:col-span-4">Points table — season default</h2>
         <Field label="Win"><Input type="number" value={p.win} onChange={(e) => setPts('win', e.target.value)} /></Field>
         <Field label="Loss"><Input type="number" value={p.loss} onChange={(e) => setPts('loss', e.target.value)} /></Field>
         <Field label="Tie"><Input type="number" value={p.tie} onChange={(e) => setPts('tie', e.target.value)} /></Field>
@@ -188,6 +257,7 @@ export function Tools() {
       <PageHeader title="System">
         <Button variant="secondary" disabled={busy} onClick={() => run('/admin/stats/rebuild', 'Statistics rebuilt')}>Rebuild statistics</Button>
         <Button variant="secondary" disabled={busy} onClick={() => run('/admin/reconcile', 'Reconciled')}>Verify match documents</Button>
+        <Button variant="secondary" disabled={busy} onClick={() => run('/admin/active-lock/repair', 'Live-match lock checked')}>Repair live-match lock</Button>
         <Button variant="ghost" onClick={metrics.reload}>Refresh</Button>
       </PageHeader>
       {m && (

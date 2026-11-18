@@ -5,6 +5,8 @@ import { ErrorBoundary } from '@cricket/client';
 import './index.css';
 import { AuthProvider, RequireAuth, useAuth } from './lib/auth.jsx';
 import { ConnectionPill, ToastProvider } from './components/ui.jsx';
+import { CategoryProvider, CategorySelect } from './lib/category.jsx';
+import { BRAND } from '@cricket/shared';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import ScoringConsole from './pages/ScoringConsole.jsx';
@@ -13,6 +15,8 @@ import Fixtures from './pages/Fixtures.jsx';
 import Teams from './pages/Teams.jsx';
 import { TournamentSettings, Users, Tools } from './pages/Settings.jsx';
 import Import from './pages/Import.jsx';
+import People from './pages/People.jsx';
+import History from './pages/History.jsx';
 
 function Shell() {
   const { user, logout, isAdmin } = useAuth();
@@ -22,11 +26,17 @@ function Shell() {
     <div className="min-h-dvh">
       <header className="bg-slate-900 text-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-1 px-4 py-2">
-          <span className="mr-3 font-bold">🏏 Scorer</span>
+          <span className="mr-3 flex items-center gap-2 font-bold">
+            <img src={`${import.meta.env.BASE_URL}${BRAND.logoSmall}`} alt="" width="28" height="28" className="h-7 w-7" />
+            {BRAND.shortName} Scorer
+          </span>
+          <span className="mr-2"><CategorySelect /></span>
           <NavLink to="/" end className={link}>Matches</NavLink>
           <NavLink to="/fixtures" className={link}>Fixtures</NavLink>
           <NavLink to="/teams" className={link}>Teams</NavLink>
+          {isAdmin && <NavLink to="/people" className={link}>Players</NavLink>}
           {isAdmin && <NavLink to="/import" className={link}>Import</NavLink>}
+          {isAdmin && <NavLink to="/history" className={link}>History</NavLink>}
           {isAdmin && <NavLink to="/settings" className={link}>Settings</NavLink>}
           {isAdmin && <NavLink to="/users" className={link}>Users</NavLink>}
           {isAdmin && <NavLink to="/system" className={link}>System</NavLink>}
@@ -51,12 +61,14 @@ createRoot(document.getElementById('root')).render(
         <AuthProvider>
           <Routes>
             <Route path="login" element={<Login />} />
-            <Route element={<RequireAuth><Shell /></RequireAuth>}>
+            <Route element={<RequireAuth><CategoryProvider><Shell /></CategoryProvider></RequireAuth>}>
               <Route index element={<Dashboard />} />
               <Route path="fixtures" element={<Fixtures />} />
               <Route path="teams" element={<Teams />} />
               <Route path="settings" element={<TournamentSettings />} />
               <Route path="import" element={<Import />} />
+              <Route path="people" element={<People />} />
+              <Route path="history" element={<History />} />
               <Route path="users" element={<Users />} />
               <Route path="system" element={<Tools />} />
               <Route path="matches/:id/setup" element={<MatchSetup />} />

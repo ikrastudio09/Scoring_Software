@@ -233,7 +233,7 @@ describe('auction import', () => {
     expect(await Player.countDocuments()).toBe(before);
   });
 
-  it('links existing teams/players by name and refuses to move a player who has already played', async () => {
+  it('links players by name only when the admin confirms it, and refuses to move a player who has already played', async () => {
     const m = await seedMatch(ctx);
     const teamA = await Team.findById(m.A.id).lean();
     const teamB = await Team.findById(m.B.id).lean();
@@ -247,11 +247,24 @@ describe('auction import', () => {
         { teamID: 32, teamName: teamB.name, teamPlayers: [{ playerID: 2002 }] },
       ],
     };
+    // A same-named record without playerID is only offered as a candidate, never linked on its own.
     const preview = (await ctx.http.post('/api/admin/import/auction/preview').set(admin()).send(data).expect(200)).body;
     expect(preview.ok).toBe(true);
-    expect(preview.counts).toEqual({ teams: { link: 2 }, players: { link: 2 } });
-    await ctx.http.post('/api/admin/import/auction/commit').set(admin()).send({ ...data, hash: preview.hash }).expect(200);
+    expect(preview.counts).toEqual({ teams: { link: 2 }, players: { create: 2 } });
+    const offered = preview.teams.flatMap((t) => t.players).find((p) => p.playerID === 2001);
+    expect(offered.candidate).toEqual({ id: m.A.players[0], name: 'A Player 1' });
+
+    // The admin ticks both candidates: now they are linked.
+    const links = { 2001: m.A.players[0], 2002: m.B.players[0] };
+    const confirmed = (await ctx.http.post('/api/admin/import/auction/preview').set(admin()).send({ ...data, links }).expect(200)).body;
+    expect(confirmed.counts).toEqual({ teams: { link: 2 }, players: { link: 2 } });
+    await ctx.http.post('/api/admin/import/auction/commit').set(admin()).send({ ...data, links, hash: confirmed.hash }).expect(200);
     expect((await Player.findById(m.A.players[0]).lean()).playerID).toBe(2001);
+    // a link to a record that is not the offered candidate is ignored (a new record is created instead)
+    const wrong = (await ctx.http.post('/api/admin/import/auction/preview').set(admin())
+      .send({ ...data, players: [...data.players, { playerID: 2003, playerName: 'A Player 2', playerStatus: 'sold' }], teams: [{ ...data.teams[0], teamPlayers: [{ playerID: 2001 }, { playerID: 2003 }] }, data.teams[1]], links: { 2003: m.B.players[1] } })
+      .expect(200)).body;
+    expect(wrong.teams.flatMap((t) => t.players).find((p) => p.playerID === 2003).action).toBe('create');
 
     // A Player 1 is in a playing XI: moving them to team 32 is refused
     data.teams[0].teamPlayers = [];

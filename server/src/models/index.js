@@ -7,3 +7,8 @@ export { MatchEvent } from './MatchEvent.js';
 export { PlayerMatchStat } from './PlayerMatchStat.js';
 export { AuditLog } from './AuditLog.js';
 export { CommentaryEdit } from './CommentaryEdit.js';
+export { Category } from './Category.js';
+export { ActiveLock } from './ActiveLock.js';
+export { PlayerIdentity } from './PlayerIdentity.js';
+export { TeamIdentity } from './TeamIdentity.js';
+export { HistoricalPlayerSeason, HistoricalTeamSeason, HistoricalImport } from './Historical.js';

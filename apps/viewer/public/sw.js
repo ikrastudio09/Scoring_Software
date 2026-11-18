@@ -1,7 +1,7 @@
 // Viewer service worker: makes the app installable and opens instantly / offline.
 // Live data is NEVER cached: /api and /socket.io always go to the network, so scores are
 // always current. The admin console and LED display are not handled at all.
-const SHELL = 'cricket-shell-v1';
+const SHELL = 'cricket-shell-v2';
 const ASSETS = 'cricket-assets-v1';
 
 self.addEventListener('install', () => self.skipWaiting());

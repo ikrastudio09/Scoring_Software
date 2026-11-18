@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { Link } from 'react-router';
 import { useApi } from '@cricket/client';
 import { api, live } from '../lib/runtime.js';
+import { useCategory } from '../lib/category.jsx';
 import { Button, Card, ErrorBox, PageHeader, Spinner, StatusBadge, fmtDateTime } from '../components/ui.jsx';
 
 const IN_PLAY = ['LIVE', 'INNINGS_BREAK', 'SECOND_INNINGS'];
@@ -30,8 +31,11 @@ function Row({ m, activeOther }) {
 }
 
 export default function Dashboard() {
-  const { data, error, reload } = useApi(api, '/matches');
-  useEffect(() => live.onTournament((e) => { if (e.type === 'MATCH_STATUS_CHANGED') reload(); }), [reload]);
+  const { scoped, category, nameOf } = useCategory();
+  const { data, error, reload } = useApi(api, scoped('/matches'));
+  // The one active match of the whole tournament: it may be in another category.
+  const now = useApi(api, '/live');
+  useEffect(() => live.onTournament((e) => { if (e.type === 'MATCH_STATUS_CHANGED') { reload(); now.reload(); } }), [reload, now.reload]); // eslint-disable-line react-hooks/exhaustive-deps
   const groups = useMemo(() => {
     const all = data?.matches || [];
     return [
@@ -44,16 +48,20 @@ export default function Dashboard() {
   }, [data]);
   if (error && !data) return <ErrorBox error={error} onRetry={reload} />;
   if (!data) return <Spinner />;
-  // One match at a time: the live (or finished-but-unconfirmed) match blocks starting another.
-  const active = data.matches.find((m) => IN_PLAY.includes(m.status)) || data.matches.find((m) => m.status === 'COMPLETED' && !m.result?.confirmed);
+  // One match at a time across ALL categories: the live (or finished-but-unconfirmed) match blocks
+  // starting another anywhere.
+  const g = now.data?.live ? now.data : null;
+  const active = g ? {
+    id: g.matchId, number: g.view?.match?.number, status: g.inPlay ? 'LIVE' : 'COMPLETED', category: g.category,
+  } : data.matches.find((m) => IN_PLAY.includes(m.status)) || data.matches.find((m) => m.status === 'COMPLETED' && !m.result?.confirmed);
   return (
     <div>
-      <PageHeader title="Matches"><Link to="/fixtures"><Button variant="secondary">All fixtures</Button></Link></PageHeader>
+      <PageHeader title={`${category?.name || ''} matches`}><Link to="/fixtures"><Button variant="secondary">All fixtures</Button></Link></PageHeader>
       {active && (
         <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl bg-slate-900 px-4 py-3 text-sm text-white">
           <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
           <span className="flex-1">
-            <b>Match {active.number}</b> {IN_PLAY.includes(active.status) ? 'is live' : 'has finished — confirm the result'}. Only one match can be live at a time.
+            <b>{active.category?.name || nameOf(active.category)} Match {active.number}</b> {IN_PLAY.includes(active.status) ? 'is live' : 'has finished — confirm the result'}. Only one match can be live at a time, across all categories.
           </span>
           <Link to={`/matches/${active.id}/score`}><Button size="px-3 py-1.5 text-sm">{IN_PLAY.includes(active.status) ? 'Open scoring' : 'Confirm result'}</Button></Link>
         </div>

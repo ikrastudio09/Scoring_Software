@@ -1,8 +1,9 @@
 # Cricket Scoring System
 
-A complete scoring system for **one cricket tournament per deployment**: a fast scorer console,
-an LED scoreboard updated after every ball, a public website and Android app, and automatic
-points table, NRR and statistics.
+A complete scoring system for **one league season with three independent categories — Men's,
+Ladies and Kids** (MPL Season 21): a fast scorer console, an LED scoreboard updated after every
+ball, a public website and Android app, and automatic points tables, NRR and statistics per
+category. Category data is never combined; only one match can be live across all categories.
 
 ```
 apps/admin    Scorer console + tournament management      → https://<domain>/admin/
@@ -26,11 +27,22 @@ Or build once and let the server host everything on :4000: `npm run build && npm
 
 ## Before the tournament: import the auction data
 
-**Admin → Import**: choose the players and teams files exported from the auction system (JSON,
-CSV or XLSX — see `data/auction.example.json`). The server validates IDs, player→team mapping
-(by `playerID` → `teamID`, never by name), statuses and auction values, shows a preview, and
-writes nothing until you confirm. Phone numbers and ages are never imported. Re-importing the
-same file changes nothing. The auction system is not needed during matches.
+**Admin → Import** (once per category — pick Men's / Ladies / Kids in the header): choose the
+players and teams files exported from the auction system (JSON, CSV or XLSX — see
+`data/auction.example.json` and [docs/IMPORT_FORMATS.md](docs/IMPORT_FORMATS.md)). The server
+validates IDs, player→team mapping (by `playerID` → `teamID`, never by name), statuses, auction
+values, age and previous statistics, shows a preview, and writes nothing until you confirm.
+Phone numbers are never imported; age is kept for administrators only. The "Previous Statistics"
+text becomes two separate records — last season, and all seasons before it. Re-importing the same
+file changes nothing. The auction system is not needed during matches.
+
+**Admin → History**: import earlier MPL seasons (player and team rows per season; CSV / XLSX /
+JSON) with column, season and category mapping, a preview, admin-chosen identity links, and undo.
+They appear on player and team profiles and in each category's Tournament Centre.
+
+**Admin → Players**: correct previous performance by hand (kept by later re-imports), and link
+season records that are the same person (playerIDs change every season) or the same franchise.
+Links are only ever made by an admin; matching names are shown as suggestions.
 
 ## Scoring a match (match day)
 
@@ -66,6 +78,11 @@ screen in full-screen mode (F11).
 | [docs/API.md](docs/API.md) | REST endpoints and scoring commands |
 | [docs/REALTIME_EVENTS.md](docs/REALTIME_EVENTS.md) | Socket.IO contract and payloads |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | production setup, HTTPS, logs, backups, recovery, cloning |
+| [docs/MIGRATIONS.md](docs/MIGRATIONS.md) | database migrations (automatic, additive) and post-deploy checks |
+| [docs/HOSTING_AND_COST.md](docs/HOSTING_AND_COST.md) | hosting architecture, sizing from measured load, monthly cost worksheet, provider comparison, reliability plan |
+| [docs/BRANDING.md](docs/BRANDING.md) | official logo pipeline, icons, launch loader, studio credit |
+| [docs/IMPORT_FORMATS.md](docs/IMPORT_FORMATS.md) | auction snapshot columns, previous-statistics format, tournament data file |
+| [IMPLEMENTATION_PROGRESS.md](IMPLEMENTATION_PROGRESS.md) | MPL Season 21 phase checklist, audit, decisions |
 | [docs/ANDROID.md](docs/ANDROID.md) | APK / AAB builds, signing, deep links, Play Store |
 | [docs/TESTING.md](docs/TESTING.md) | test suites and measured performance |
 
@@ -76,8 +93,8 @@ screen in full-screen mode (F11).
 | `npm test` | server unit + integration + realtime + tournament tests (local mongod) |
 | `npm run test:e2e` | browser end-to-end tests (after `npm run build`) |
 | `npm run load -- …` | load / latency test (see docs/TESTING.md) |
-| `npm run seed -- --reset --simulate N --live` | sample data |
-| `npm run import -w server -- <file.json>` | load a real tournament (see `data/tournament.example.json`) |
+| `npm run seed -- --reset --simulate N --live [--all-categories]` | sample data (Men's; optionally small Ladies and Kids tournaments too) |
+| `npm run import -w server -- <file.json> [--category ladies]` | load a real tournament into a category (see `data/tournament.example.json`) |
 | `npm run create-user -w server -- <name> <admin\|scorer>` | add a scorer |
 | `npm run verify:matches -w server [-- --repair]` | integrity check of every match against its event log |
 | `npm run stats:rebuild -w server` | recompute all statistics from events |
@@ -85,9 +102,11 @@ screen in full-screen mode (F11).
 
 ## Rules supported
 
-Configurable per tournament (and frozen per match at creation): overs per innings, balls per over,
-max overs per bowler (part overs count, no consecutive overs), players per side, wide/no-ball
-penalty runs, free hit. Points for win/tie/no result/loss, stages counted, NRR all-out rule.
+Season defaults, overridable per category (and frozen per match at creation): overs per innings,
+balls per over, max overs per bowler (part overs count, no consecutive overs), players per side,
+wide/no-ball penalty runs, free hit. Points for win/tie/no result/loss, bonus point, stages
+counted, NRR all-out rule, tie-breakers, qualification slots, leaderboard thresholds.
 
-Not in V1: super over (ties are recorded as ties), DLS/revised targets, last-man-stands, 5-run
-penalty awards, changing a playing XI after scoring has started.
+A tie in the league stage stays a tie; a tie in a knockout is decided by a Super Over.
+Not supported: DLS/revised targets, last-man-stands, 5-run penalty awards, changing a playing XI
+after scoring has started.

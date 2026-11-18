@@ -37,9 +37,14 @@ Match envelope:
   "live": { /* LiveView (viewer, led) or ScorerView (admin) */ },
   "ball": {                           // deliveries only: compact summary + local commentary
     "seq": 57, "innings": 2, "over": "16.4", "kind": "four", "label": "4", "runs": 4,
-    "score": "127/5", "text": "Jitendra to Abdul Danish, FOUR! Pulled to the boundary.",
+    "score": "127/5",
+    "batter": { "id": "…", "name": "Abdul Danish" }, "bowler": { "id": "…", "name": "Jitendra" },
+    "extra": null,                    // or { "type": "wide|noball|bye|legbye", "runs": 2 }
+    "wicket": null,                   // or { "type": "caught", "batter": { "id", "name" } }
+    "text": "Jitendra to Abdul Danish, FOUR! Pulled to the boundary.",
     "scoreText": "SGM Strikers move to 127/5. Need 21 from 20 balls.",
-    "milestones": ["…"], "endOfOver": { "over": 17, "runs": 9, "wickets": 0, "score": "…", "text": "…" }
+    "milestones": ["…"],              // FIFTY / HUNDRED, wicket summary, Three/Five wickets, HAT-TRICK, the winning line
+    "endOfOver": { "over": 17, "runs": 9, "wickets": 0, "maiden": false, "score": "…", "text": "…" }
   }
 }
 ```
@@ -72,8 +77,8 @@ Tournament room envelopes (no `live`):
 | `type` | Payload |
 |---|---|
 | `MATCH_STATUS_CHANGED` | `{ matchId, version, status, summary, result }` |
-| `POINTS_TABLE_UPDATED` | `{ matchId }` — refetch `GET /api/points-table` |
-| `STATISTICS_UPDATED` | `{ matchId }` — refetch `GET /api/stats/leaderboards` |
+| `POINTS_TABLE_UPDATED` | `{ matchId, category }` — refetch `GET /api/points-table?category=…` if `category` (key) is the one shown |
+| `STATISTICS_UPDATED` | `{ matchId, category }` — refetch that category's leaderboards |
 
 ## Ordering rule (no regressions)
 
@@ -101,7 +106,7 @@ non-scoring change such as result confirmation is re-sent at the same version). 
   "needs": { "batter": false, "bowler": false, "startInnings": false },
   "lastEvent": { "type", "seq", "effects", "label" },
   "result": { "type": "win|tie|no_result|abandoned|walkover", "winner", "marginRuns|marginWickets", "text" } ,
-  "match": { "number", "status", "stage", "venue", "scheduledAt", "teamA", "teamB", "toss", "resultConfirmed", "playerOfMatch" }
+  "match": { "number", "category": { "id", "key", "name" }, "status", "stage", "venue", "scheduledAt", "teamA", "teamB", "toss", "resultConfirmed", "playerOfMatch" }
 }
 ```
 

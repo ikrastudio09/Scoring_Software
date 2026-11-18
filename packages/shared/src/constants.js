@@ -74,7 +74,8 @@ export const DELIVERY_DISMISSALS = Object.freeze([
   'obstructing_field', 'hit_ball_twice',
 ]);
 export const FIELDER_DISMISSALS = Object.freeze(['caught', 'run_out', 'stumped']);
-export const FIELDER_REQUIRED = Object.freeze(['caught']);
+// A stumping is always made by the wicketkeeper (or a substitute): record who, for fielding stats.
+export const FIELDER_REQUIRED = Object.freeze(['caught', 'stumped']);
 export const BOWLER_CREDITED = Object.freeze(['bowled', 'caught', 'caught_and_bowled', 'lbw', 'stumped', 'hit_wicket']);
 // Dismissals of the non-striker are possible only for these.
 export const EITHER_BATTER_DISMISSALS = Object.freeze(['run_out', 'obstructing_field']);

@@ -25,11 +25,15 @@ export const allowsFielder = (type) => FIELDER_DISMISSALS.includes(type);
 export const requiresFielder = (type) => FIELDER_REQUIRED.includes(type);
 export const allowsRuns = (type) => !NO_RUNS_ALLOWED.has(type);
 
-/** Returns an error message, or null if the dismissal is possible on this delivery. */
+/**
+ * Returns an error message, or null if the dismissal is possible on this delivery.
+ * On a free hit the striker can only be out in the ways possible off a no-ball, even when the
+ * free-hit delivery is itself a wide (ICC playing conditions 21.18) — so no stumping off it.
+ */
 export function dismissalNotPossible(type, { extra, freeHit }) {
+  if (freeHit && !ON_FREE_HIT.has(type)) return `${type} is not possible on a free hit`;
   if (extra === 'wide' && !ON_WIDE.has(type)) return `${type} is not possible off a wide`;
   if (extra === 'noball' && !ON_NO_BALL.has(type)) return `${type} is not possible off a no-ball`;
-  if (freeHit && extra !== 'wide' && !ON_FREE_HIT.has(type)) return `${type} is not possible on a free hit`;
   return null;
 }
 

@@ -39,6 +39,7 @@ test('app bundle loads cross-origin and receives realtime updates', async ({ bro
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`http://localhost:${PORT}/`);
   await expect(page.getByRole('heading', { name: 'Premier Cricket League' })).toBeVisible();
+  await page.getByRole('link', { name: "Open Men's →" }).click();
   await page.getByRole('link', { name: 'Table', exact: true }).click();
   await expect(page.locator('tbody tr')).toHaveCount(13);
 
@@ -60,6 +61,7 @@ test('app bundle loads cross-origin and receives realtime updates', async ({ bro
   };
   await cmd('innings/start', { strikerId: a[0], nonStrikerId: a[1], bowlerId: b[10] });
 
+  // An old-style deep link (no category) still opens the match.
   await page.goto(`http://localhost:${PORT}/matches/${m.id}`);
   await expect(page.getByTestId('live-score')).toHaveText('0/0');
   await cmd('deliveries', { runs: 4, boundary: true });

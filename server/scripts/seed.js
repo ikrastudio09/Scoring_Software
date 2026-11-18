@@ -4,6 +4,7 @@
 //   npm run seed -- --reset            drop the database first (refused in production)
 //   npm run seed -- --simulate 20      also play and confirm the first 20 matches
 //   npm run seed -- --live             leave the next match in progress (for UI work)
+//   npm run seed -- --all-categories   also small Ladies and Kids tournaments (6-over Kids games)
 import mongoose from 'mongoose';
 import { connectDb, disconnectDb } from '../src/db.js';
 import { config } from '../src/config/env.js';
@@ -12,6 +13,7 @@ import { ensureBootstrapAdmin } from '../src/services/auth.js';
 import { importTournament } from './lib/importer.js';
 import { playMatch } from './lib/simulate.js';
 import { rebuildAllStats } from '../src/services/stats.js';
+import { getCategory, updateCategory } from '../src/services/categories.js';
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(`--${name}`);
@@ -44,6 +46,16 @@ function roundRobin(n) {
     ids.splice(1, 0, ids.pop());
   }
   return rounds.flat();
+}
+
+/** A small round robin for the Ladies / Kids categories (team names must differ per category only). */
+export function smallTournament(suffix, count = 4) {
+  const full = sampleTournament();
+  const teams = full.teams.slice(0, count).map((t) => ({
+    ...t, name: `${t.name} ${suffix}`, players: t.players.map((p) => ({ ...p, name: `${p.name} ${suffix[0]}` })),
+  }));
+  const shorts = new Set(teams.map((t) => t.shortName));
+  return { teams, fixtures: full.fixtures.filter((f) => shorts.has(f.teamA) && shorts.has(f.teamB)).map((f, i) => ({ ...f, number: i + 1 })) };
 }
 
 export function sampleTournament() {
@@ -94,9 +106,15 @@ async function main() {
   await Promise.all(Object.values(models).map((M) => M.syncIndexes()));
   await ensureBootstrapAdmin();
   await importTournament(sampleTournament());
+  if (flag('all-categories')) {
+    await importTournament(smallTournament('Queens'), { category: 'ladies' });
+    await importTournament(smallTournament('Juniors'), { category: 'kids' });
+    await updateCategory(await getCategory('kids'), { rules: { oversPerInnings: 6, maxOversPerBowler: 2 } });
+  }
 
   const simulate = opt('simulate', 0);
-  const league = await models.Match.find({ stage: 'league' }).sort({ number: 1 }).lean();
+  const mens = await getCategory('mens');
+  const league = await models.Match.find({ category: mens._id, stage: 'league' }).sort({ number: 1 }).lean();
   for (let i = 0; i < simulate && i < league.length; i++) {
     if (league[i].status === 'COMPLETED') continue;
     const { view, commands } = await playMatch(league[i]._id, { seed: league[i].number });

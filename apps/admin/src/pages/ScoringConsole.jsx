@@ -383,14 +383,16 @@ function WicketModal({ open, onClose, view, send }) {
   const freeHit = c.freeHit;
   const allowedOn = (t, extra) => {
     if (extra && !POSSIBLE[extra].includes(t)) return false;
-    if (freeHit && !extra && !['run_out', 'obstructing_field', 'hit_ball_twice'].includes(t)) return false;
+    // On a free hit (even if it is a wide) only the no-ball dismissals are possible.
+    if (freeHit && !['run_out', 'obstructing_field', 'hit_ball_twice'].includes(t)) return false;
     return true;
   };
   const needsWho = type === 'run_out' || type === 'obstructing_field';
   const fielderOpt = ['caught', 'run_out', 'stumped'].includes(type);
   const runsAllowed = needsWho;
   const extras = type === 'stumped' || type === 'hit_wicket' ? ['', 'wide'] : needsWho ? ['', 'wide', 'noball'] : type === 'hit_ball_twice' ? ['', 'noball'] : [''];
-  const valid = type && allowedOn(type, f.extra || null) && (type !== 'caught' || f.fielderId);
+  const fielderNeeded = type === 'caught' || type === 'stumped';
+  const valid = type && allowedOn(type, f.extra || null) && (!fielderNeeded || f.fielderId);
 
   const submit = () => {
     const wicket = { type };
@@ -433,7 +435,7 @@ function WicketModal({ open, onClose, view, send }) {
           {fielderOpt && (
             <Field label={type === 'caught' ? 'Caught by (required)' : type === 'stumped' ? 'Wicket-keeper' : 'Fielder (optional)'}>
               <Select value={f.fielderId} onChange={(e) => setF({ ...f, fielderId: e.target.value })}>
-                <option value="">{type === 'caught' ? 'Select fielder…' : 'Not recorded'}</option>
+                <option value="">{type === 'caught' ? 'Select fielder…' : type === 'stumped' ? 'Select wicketkeeper…' : 'Not recorded'}</option>
                 {view.scorer.bowlingXI.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 <option value="sub">Substitute fielder</option>
               </Select>

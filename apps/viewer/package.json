@@ -8,7 +8,7 @@
     "build": "vite build",
     "build:android": "vite build --mode android",
     "preview": "vite preview",
-    "cap:sync": "npm run build:android && cap sync android",
+    "cap:sync": "npm run build:android && node scripts/cap-sync.mjs",
     "android:debug": "npm run cap:sync && cd android && gradlew assembleDebug",
     "android:release": "npm run cap:sync && cd android && gradlew assembleRelease bundleRelease"
   },

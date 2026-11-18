@@ -4,12 +4,14 @@ import { MATCH_STAGES } from '@cricket/shared';
 import { useApi } from '@cricket/client';
 import { api } from '../lib/runtime.js';
 import { useAuth } from '../lib/auth.jsx';
+import { useCategory } from '../lib/category.jsx';
 import { Button, Card, ErrorBox, Field, Input, Modal, PageHeader, Select, Spinner, StatusBadge, fmtDateTime, toLocalInput, useToast } from '../components/ui.jsx';
 
 const EMPTY = { teamA: '', teamB: '', teamALabel: '', teamBLabel: '', venue: '', scheduledAt: '', stage: 'league', group: '', overs: '' };
 
 function FixtureForm({ open, onClose, initial, teams, venues, onSaved }) {
   const toast = useToast();
+  const { key } = useCategory();
   const [f, setF] = useState(initial);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -25,7 +27,7 @@ function FixtureForm({ open, onClose, initial, teams, venues, onSaved }) {
     if (f.overs) body.rules = { oversPerInnings: Number(f.overs) };
     if (f.number) body.number = Number(f.number);
     try {
-      if (editing) await api.put(`/matches/${initial.id}`, body); else await api.post('/matches', body);
+      if (editing) await api.put(`/matches/${initial.id}`, body); else await api.post('/matches', { ...body, category: key });
       toast(editing ? 'Fixture updated' : 'Fixture created', 'success');
       onSaved();
       onClose();
@@ -45,7 +47,7 @@ function FixtureForm({ open, onClose, initial, teams, venues, onSaved }) {
         </Field>
         <Field label="Stage"><Select value={f.stage} onChange={(e) => setF({ ...f, stage: e.target.value })}>{MATCH_STAGES.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}</Select></Field>
         <Field label="Group (optional)"><Input value={f.group} onChange={(e) => setF({ ...f, group: e.target.value })} /></Field>
-        <Field label="Overs per innings" hint="Blank = tournament default. Locked once scoring starts."><Input type="number" min="1" max="50" value={f.overs} onChange={(e) => setF({ ...f, overs: e.target.value })} /></Field>
+        <Field label="Overs per innings" hint="Blank = category default. Locked once scoring starts."><Input type="number" min="1" max="50" value={f.overs} onChange={(e) => setF({ ...f, overs: e.target.value })} /></Field>
         <Field label="Match number" hint="Blank = next number"><Input type="number" min="1" value={f.number || ''} onChange={(e) => setF({ ...f, number: e.target.value })} /></Field>
       </div>
       <div className="mt-3"><ErrorBox error={err} /></div>
@@ -75,8 +77,9 @@ function StatusMenu({ match, onDone }) {
 export default function Fixtures() {
   const { isAdmin } = useAuth();
   const toast = useToast();
-  const matches = useApi(api, '/matches');
-  const teams = useApi(api, '/teams');
+  const { scoped, category } = useCategory();
+  const matches = useApi(api, scoped('/matches'));
+  const teams = useApi(api, scoped('/teams'));
   const t = useApi(api, '/tournament');
   const [form, setForm] = useState(null);
   if (matches.error && !matches.data) return <ErrorBox error={matches.error} onRetry={matches.reload} />;
@@ -93,7 +96,7 @@ export default function Fixtures() {
 
   return (
     <div>
-      <PageHeader title={`Fixtures (${matches.data.matches.length})`}>{isAdmin && <Button onClick={() => setForm({ ...EMPTY })}>New fixture</Button>}</PageHeader>
+      <PageHeader title={`${category?.name || ''} fixtures (${matches.data.matches.length})`}>{isAdmin && <Button onClick={() => setForm({ ...EMPTY })}>New fixture</Button>}</PageHeader>
       <Card className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-sm">
           <thead className="bg-slate-50 text-xs text-slate-500">

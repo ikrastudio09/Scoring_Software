@@ -27,6 +27,7 @@ export const config = {
   rateLimit: {
     loginPerMinute: int(process.env.RATE_LIMIT_LOGIN_PER_MIN, 10),
     publicPerMinute: int(process.env.RATE_LIMIT_PUBLIC_PER_MIN, 600),
+    whatIfPerMinute: int(process.env.RATE_LIMIT_WHATIF_PER_MIN, 30),
   },
 };
 

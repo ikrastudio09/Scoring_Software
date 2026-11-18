@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { useSearchParams } from 'react-router';
 import { useApi } from '@cricket/client';
 import { api, live } from '../lib/runtime.js';
 import { Avatar, Card, Empty, ErrorState, Spinner, Tabs, TeamDot } from '../components/ui.jsx';
 import { num } from '../lib/format.js';
+import { CatLink, useCategory } from '../lib/category.jsx';
 
 const BOARDS = {
   batting: [
@@ -21,10 +22,66 @@ const BOARDS = {
     ['mostDots', 'Most dot balls', (p) => p.bowling.dots, (p) => `${p.bowling.overs} overs · ${num(p.bowling.dotPct, 1)}% dots`],
   ],
   other: [
+    ['mostDismissals', 'Fielding dismissals', (p) => p.fielding.catches + p.fielding.runOuts + p.fielding.stumpings, (p) => `${p.fielding.catches} ct · ${p.fielding.runOuts} ro · ${p.fielding.stumpings} st`],
     ['mostCatches', 'Most catches', (p) => p.fielding.catches, (p) => `${p.matches} matches`],
     ['mostPlayerOfMatch', 'Player of the match awards', (p) => p.playerOfMatch, (p) => `${p.matches} matches`],
   ],
 };
+
+/** Rank with "=" for a shared place (players level on the ranking value). */
+function RankNo({ row }) {
+  return <span className={`w-6 text-sm tnum ${row.rank === 1 ? 'font-bold text-brand' : 'text-slate-400'}`}>{row.rank}{row.tied ? '=' : ''}</span>;
+}
+
+const CAPS = {
+  orange: {
+    title: 'Orange Cap', dot: 'bg-orange-500', value: (r) => r.runs, unit: 'Runs',
+    cols: [['M', (r) => r.matches], ['Inns', (r) => r.innings], ['Avg', (r) => num(r.average)], ['SR', (r) => num(r.strikeRate, 1)], ['4s', (r) => r.fours], ['6s', (r) => r.sixes]],
+  },
+  purple: {
+    title: 'Purple Cap', dot: 'bg-purple-600', value: (r) => r.wickets, unit: 'Wkts',
+    cols: [['M', (r) => r.matches], ['Ov', (r) => r.overs], ['Econ', (r) => num(r.economy)], ['Avg', (r) => num(r.average)], ['SR', (r) => num(r.strikeRate, 1)], ['Best', (r) => r.best]],
+  },
+};
+
+/** Orange / Purple Cap: the holder(s) and the chasing pack. Level players share the cap. */
+export function CapTable({ kind, cap, limit = 10 }) {
+  const c = CAPS[kind];
+  const rows = (cap?.rows || []).slice(0, limit);
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex items-center gap-2 bg-slate-50 px-4 py-2.5">
+        <span className={`h-2.5 w-2.5 rounded-full ${c.dot}`} />
+        <h3 className="text-sm font-semibold">{c.title}</h3>
+        {cap?.holders?.length > 1 && <span className="text-[11px] text-slate-500">· {cap.holders.length} joint holders</span>}
+      </div>
+      {!rows.length ? <p className="px-4 py-4 text-sm text-slate-500">After the first result.</p> : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm sm:min-w-[420px]">
+            <thead className="text-[11px] text-slate-500">
+              <tr><th className="w-8 py-1.5 pl-4 text-left font-medium">#</th><th className="text-left font-medium">Player</th><th className="px-2 text-right font-semibold text-slate-700">{c.unit}</th>{c.cols.map(([h]) => <th key={h} className="hidden px-2 text-right font-medium sm:table-cell">{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.playerId} className="border-t border-slate-100">
+                  <td className="py-2 pl-4"><RankNo row={r} /></td>
+                  <td className="py-2">
+                    <CatLink to={`/players/${r.playerId}`} className="flex items-center gap-2 font-medium hover:text-brand">
+                      <TeamDot color={r.teamInfo?.color} size="h-2.5 w-2.5" /><span className="max-w-[8.5rem] truncate sm:max-w-[11rem]">{r.name}</span>
+                      <span className="text-xs font-normal text-slate-500">{r.teamInfo?.shortName}</span>
+                    </CatLink>
+                  </td>
+                  <td className={`tnum px-2 text-right text-base font-bold ${r.rank === 1 ? 'text-brand' : ''}`}>{c.value(r)}</td>
+                  {c.cols.map(([h, f]) => <td key={h} className="tnum hidden px-2 text-right text-slate-600 sm:table-cell">{f(r) ?? '-'}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
 
 function Board({ title, rows, value, detail, note }) {
   return (
@@ -37,15 +94,15 @@ function Board({ title, rows, value, detail, note }) {
         <ol>
           {rows.map((p, i) => (
             <li key={`${p.playerId}-${i}`} className="flex items-center gap-3 border-t border-slate-100 px-4 py-2.5">
-              <span className={`w-5 text-sm tnum ${i === 0 ? 'font-bold text-brand' : 'text-slate-400'}`}>{i + 1}</span>
+              <RankNo row={p} />
               <div className="min-w-0 flex-1">
-                <Link to={`/players/${p.playerId}`} className="flex items-center gap-2 font-medium hover:text-brand">
+                <CatLink to={`/players/${p.playerId}`} className="flex items-center gap-2 font-medium hover:text-brand">
                   <TeamDot color={p.teamInfo?.color} size="h-2.5 w-2.5" /><span className="truncate">{p.name}</span>
                   <span className="text-xs font-normal text-slate-500">{p.teamInfo?.shortName}</span>
-                </Link>
+                </CatLink>
                 <p className="truncate text-xs text-slate-500">{detail(p)}</p>
               </div>
-              <span className={`tnum text-lg font-bold ${i === 0 ? 'text-brand' : 'text-slate-800'}`}>{value(p)}</span>
+              <span className={`tnum text-lg font-bold ${p.rank === 1 ? 'text-brand' : 'text-slate-800'}`}>{value(p)}</span>
             </li>
           ))}
         </ol>
@@ -63,9 +120,10 @@ const MVP_SORT = {
 
 /** Tournament MVP: ranked by impact. Auction value plays no part in it. */
 function MvpBoard() {
-  const { data, error, reload } = useApi(api, '/stats/mvp');
+  const { scoped, key } = useCategory();
+  const { data, error, reload } = useApi(api, scoped('/stats/mvp'));
   const [by, setBy] = useState('overall');
-  useEffect(() => live.onTournament((e) => { if (e.type === 'STATISTICS_UPDATED') reload(); }), [reload]);
+  useEffect(() => live.onTournament((e) => { if (e.type === 'STATISTICS_UPDATED' && (!e.category || e.category === key)) reload(); }), [reload, key]);
   const rows = useMemo(() => {
     if (!data) return [];
     const f = MVP_SORT[by][1];
@@ -95,10 +153,10 @@ function MvpBoard() {
               <tr key={p.playerId} className="border-t border-slate-100">
                 <td className={`py-2 pl-4 tnum ${i < 3 ? 'font-bold text-brand' : 'text-slate-400'}`}>{i + 1}</td>
                 <td>
-                  <Link to={`/players/${p.playerId}`} className="flex items-center gap-2 py-1 font-medium hover:text-brand">
+                  <CatLink to={`/players/${p.playerId}`} className="flex items-center gap-2 py-1 font-medium hover:text-brand">
                     <Avatar name={p.name} photoUrl={p.photoUrl} color={p.teamInfo?.color} size="h-8 w-8 text-[10px]" />
                     <span className="min-w-0"><span className="block truncate">{p.name}</span><span className="text-xs font-normal text-slate-500">{p.teamInfo?.shortName}</span></span>
-                  </Link>
+                  </CatLink>
                 </td>
                 <td className="text-right tnum text-slate-600">{p.matches}</td>
                 <td className="text-right tnum">{p.runs}</td>
@@ -122,9 +180,9 @@ function MvpBoard() {
             {data.valueForMoney.slice(0, 10).map((p, i) => (
               <li key={p.playerId} className="flex items-center gap-3 border-t border-slate-100 px-4 py-2.5">
                 <span className="w-5 text-sm text-slate-400 tnum">{i + 1}</span>
-                <Link to={`/players/${p.playerId}`} className="min-w-0 flex-1 truncate font-medium hover:text-brand">
+                <CatLink to={`/players/${p.playerId}`} className="min-w-0 flex-1 truncate font-medium hover:text-brand">
                   {p.name} <span className="text-xs font-normal text-slate-500">{p.teamInfo?.shortName} · {p.soldPoints.toLocaleString()} pts · impact {Math.round(p.impact.total)}</span>
-                </Link>
+                </CatLink>
                 <span className="tnum font-bold">{num(p.valuePer100k, 1)}</span>
               </li>
             ))}
@@ -144,12 +202,14 @@ export default function Stats() {
   const [params, setParams] = useSearchParams();
   const tab = params.get('tab') || 'batting';
   const setTab = (t) => setParams({ tab: t }, { replace: true });
-  const { data, error, reload } = useApi(api, '/stats/leaderboards');
-  useEffect(() => live.onTournament((e) => { if (e.type === 'STATISTICS_UPDATED') reload(); }), [reload]);
+  const { scoped, key } = useCategory();
+  const { data, error, reload } = useApi(api, scoped('/stats/leaderboards'));
+  useEffect(() => live.onTournament((e) => { if (e.type === 'STATISTICS_UPDATED' && (!e.category || e.category === key)) reload(); }), [reload, key]);
   if (error && !data) return <ErrorState error={error} onRetry={reload} />;
   if (!data) return <Spinner />;
   const q = data.qualify;
   const notes = { bestStrikeRate: `min ${q.strikeRateMinBalls} balls`, bestEconomy: `min ${q.economyMinBalls / 6} overs`, bestBattingAverage: `min ${q.averageMinInnings} inns` };
+  const capNote = q.capMinMatches ? `Cap eligibility: at least ${q.capMinMatches} matches.` : null;
 
   return (
     <div>
@@ -160,6 +220,13 @@ export default function Stats() {
         ))}
       </div>
       {!data.totals.matches && <Empty>Statistics appear after the first result is confirmed.</Empty>}
+      {data.totals.matches > 0 && (
+        <div className="mb-4 grid gap-4 lg:grid-cols-2">
+          <CapTable kind="orange" cap={data.orangeCap} />
+          <CapTable kind="purple" cap={data.purpleCap} />
+          {capNote && <p className="text-xs text-slate-500 lg:col-span-2">{capNote}</p>}
+        </div>
+      )}
       <Tabs value={tab} onChange={setTab} tabs={[{ value: 'mvp', label: 'MVP' }, { value: 'batting', label: 'Batting' }, { value: 'bowling', label: 'Bowling' }, { value: 'other', label: 'Fielding & awards' }]} />
       <div className="mt-4">
         {tab === 'mvp' ? <MvpBoard /> : (

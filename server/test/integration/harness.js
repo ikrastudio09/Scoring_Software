@@ -10,6 +10,7 @@ import { invalidateTournamentCache, updateTournament } from '../../src/services/
 import { invalidateRuntime } from '../../src/services/runtime.js';
 import { invalidatePoints } from '../../src/services/points.js';
 import { invalidateStats } from '../../src/services/stats.js';
+import { invalidateCategories } from '../../src/services/categories.js';
 import { EVENT_TYPES, IN_PLAY_STATUSES, SOCKET_MESSAGE, SOCKET_SUBSCRIBE } from '@cricket/shared';
 import { Match } from '../../src/models/index.js';
 import { executeCommand } from '../../src/services/scoring.js';
@@ -47,6 +48,7 @@ export function clearCaches() {
   invalidateTournamentCache();
   invalidatePoints();
   invalidateStats();
+  invalidateCategories();
 }
 
 export const auth = (token) => ({ Authorization: `Bearer ${token}` });
@@ -71,8 +73,8 @@ export async function finishActiveMatches() {
   }
 }
 
-/** Create a tournament with two teams of `xi` players and one ready match. */
-export async function seedMatch(ctx, { overs = 2, maxOversPerBowler = 1, xi = 11, tossWinner = 'A', decision = 'bat', teams } = {}) {
+/** Create a tournament with two teams of `xi` players and one ready match (in `category`, default Men's). */
+export async function seedMatch(ctx, { overs = 2, maxOversPerBowler = 1, xi = 11, tossWinner = 'A', decision = 'bat', teams, category } = {}) {
   await finishActiveMatches();
   await updateTournament({ name: 'Test Cup', rules: { oversPerInnings: overs, maxOversPerBowler, playersPerSide: 11 } });
   const admin = auth(ctx.adminToken);
@@ -82,8 +84,8 @@ export async function seedMatch(ctx, { overs = 2, maxOversPerBowler = 1, xi = 11
     [A, B] = teams;
   } else {
     const n = Math.random().toString(36).slice(2, 6);
-    A = (await ctx.http.post('/api/teams').set(admin).send({ name: `Alpha ${n}`, shortName: 'ALP' }).expect(201)).body.team;
-    B = (await ctx.http.post('/api/teams').set(admin).send({ name: `Bravo ${n}`, shortName: 'BRA' }).expect(201)).body.team;
+    A = (await ctx.http.post('/api/teams').set(admin).send({ name: `Alpha ${n}`, shortName: 'ALP', category }).expect(201)).body.team;
+    B = (await ctx.http.post('/api/teams').set(admin).send({ name: `Bravo ${n}`, shortName: 'BRA', category }).expect(201)).body.team;
     A.players = [];
     B.players = [];
     for (let i = 1; i <= xi; i++) {
@@ -91,7 +93,7 @@ export async function seedMatch(ctx, { overs = 2, maxOversPerBowler = 1, xi = 11
       B.players.push((await ctx.http.post('/api/players').set(admin).send({ name: `B Player ${i}`, team: B.id }).expect(201)).body.player.id);
     }
   }
-  const match = (await ctx.http.post('/api/matches').set(admin).send({ teamA: A.id, teamB: B.id, venue: 'Main Ground', scheduledAt: new Date().toISOString() }).expect(201)).body.match;
+  const match = (await ctx.http.post('/api/matches').set(admin).send({ teamA: A.id, teamB: B.id, category, venue: 'Main Ground', scheduledAt: new Date().toISOString() }).expect(201)).body.match;
   await ctx.http.post(`/api/matches/${match.id}/setup`).set(admin).send({
     toss: { winner: tossWinner === 'A' ? A.id : B.id, decision },
     playingXI: { teamA: A.players.slice(0, xi), teamB: B.players.slice(0, xi) },

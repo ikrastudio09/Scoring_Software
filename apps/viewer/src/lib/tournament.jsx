@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
+import { BRAND } from '@cricket/shared';
 import { api } from './runtime.js';
+import { bootReady } from './boot.js';
 
 const Ctx = createContext(null);
 const CACHE_KEY = 'tournament.v1';
@@ -10,7 +12,7 @@ function applyBranding(t) {
   if (t.primaryColor) root.style.setProperty('--brand', t.primaryColor);
   if (t.accentColor) root.style.setProperty('--accent', t.accentColor);
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', t.primaryColor || '#0f766e');
-  document.title = t.name || 'Live Cricket';
+  document.title = t.name || BRAND.name;
 }
 
 /** Tournament info + branding. Cached locally so the app brands itself instantly, even offline. */
@@ -18,7 +20,10 @@ export function TournamentProvider({ children }) {
   const [t, setT] = useState(() => {
     try { return JSON.parse(localStorage.getItem(CACHE_KEY)); } catch { return null; }
   });
-  useEffect(() => { applyBranding(t); }, [t]);
+  useEffect(() => {
+    applyBranding(t);
+    if (t) bootReady(); // the app can draw itself: let the launch loader go
+  }, [t]);
   useEffect(() => {
     api.get('/tournament').then(({ tournament }) => {
       setT(tournament);

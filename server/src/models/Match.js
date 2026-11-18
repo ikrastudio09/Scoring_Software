@@ -6,7 +6,9 @@ const { ObjectId } = mongoose.Schema.Types;
 // Setup fields are source of truth. `status`, `stateVersion`, `summary` and `result` (except
 // the confirmation fields) are derived from the event log and rewritten after every command.
 const matchSchema = new mongoose.Schema({
-  number: { type: Number, required: true, unique: true },
+  category: { type: ObjectId, ref: 'Category', index: true },
+  // Match numbers restart in every category (Men's Match 1, Ladies Match 1, ...).
+  number: { type: Number, required: true },
   stage: { type: String, enum: MATCH_STAGES, default: 'league' },
   group: { type: String, trim: true },
   teamA: { type: ObjectId, ref: 'Team' },
@@ -55,6 +57,7 @@ const matchSchema = new mongoose.Schema({
   completedAt: Date,
 }, { timestamps: true });
 
-matchSchema.index({ 'result.confirmed': 1, stage: 1 });
+matchSchema.index({ category: 1, number: 1 }, { unique: true });
+matchSchema.index({ category: 1, 'result.confirmed': 1, stage: 1 });
 
 export const Match = mongoose.model('Match', matchSchema);

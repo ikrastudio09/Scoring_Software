@@ -1,0 +1,18 @@
+/* Launch loader (#boot in index.html). A static file on purpose: an inline <style> in index.html
+   breaks `vite build` on Windows when the working directory is spelled with a lowercase drive letter
+   (d:\ instead of D:\). The background colour comes from BRAND via the style attribute in index.html. */
+#boot { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: #fff; font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  transition: opacity .45s ease; padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
+#boot.boot-out { opacity: 0; pointer-events: none; }
+#boot .boot-logo { width: min(44vw, 176px); height: auto; aspect-ratio: 1; animation: boot-in .9s cubic-bezier(.2,.8,.2,1) both, boot-glow 2.4s ease-in-out .9s infinite; border-radius: 50%; }
+#boot .boot-name { margin: 20px 0 2px; font-size: 15px; font-weight: 700; letter-spacing: .02em; text-align: center; animation: boot-fade .6s .35s both; }
+#boot .boot-season { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .3em; text-transform: uppercase; color: rgba(255,255,255,.55); animation: boot-fade .6s .5s both; }
+#boot .boot-bar { width: 120px; height: 2px; margin-top: 26px; overflow: hidden; border-radius: 2px; background: rgba(255,255,255,.12); }
+#boot .boot-bar span { display: block; width: 40%; height: 100%; border-radius: 2px; background: #f5b51a; animation: boot-bar 1.3s ease-in-out infinite; }
+#boot .boot-credit { position: absolute; bottom: calc(22px + env(safe-area-inset-bottom)); margin: 0; font-size: 11px; letter-spacing: .08em; color: rgba(255,255,255,.45); }
+@keyframes boot-in { from { opacity: 0; transform: scale(.86); } to { opacity: 1; transform: scale(1); } }
+@keyframes boot-glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(245,181,26,0); } 50% { box-shadow: 0 0 36px 4px rgba(245,181,26,.22); } }
+@keyframes boot-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes boot-bar { 0% { transform: translateX(-110%); } 100% { transform: translateX(260%); } }
+@media (prefers-reduced-motion: reduce) { #boot * { animation: none !important; } }

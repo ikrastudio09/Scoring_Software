@@ -4,7 +4,7 @@
 import { StrictMode, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createApi, createLiveConnection, ErrorBoundary, useConnectionStatus, useLiveMatch } from '@cricket/client';
-import { fixed } from '@cricket/shared';
+import { BRAND, fixed, studioCredit } from '@cricket/shared';
 import './index.css';
 
 const api = createApi();
@@ -13,7 +13,10 @@ const params = new URLSearchParams(window.location.search);
 const PINNED = params.get('match');
 const IN_PLAY = ['LIVE', 'INNINGS_BREAK', 'SECOND_INNINGS', 'READY'];
 
-/** Which match to show: pinned, or the first in-play match (re-checked on status changes). */
+/**
+ * Which match to show: pinned, or the one live match of the whole tournament (any category — only
+ * one can be live), else a match whose toss is done. Re-checked on every status change.
+ */
 function useMatchId() {
   const [id, setId] = useState(PINNED);
   const [tournament, setTournament] = useState(null);
@@ -21,15 +24,12 @@ function useMatchId() {
     let timer;
     const pick = async () => {
       try {
-        const home = await api.get('/home');
-        setTournament(home.tournament);
+        const [now, overview] = await Promise.all([api.get('/live'), api.get('/overview')]);
+        setTournament(overview.tournament);
         if (!PINNED) {
-          const order = ['LIVE', 'SECOND_INNINGS', 'INNINGS_BREAK', 'READY'];
-          const next = [...home.live].sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status))[0];
-          setId((cur) => {
-            const curStillLive = home.live.some((m) => m.id === cur && IN_PLAY.includes(m.status));
-            return curStillLive ? cur : next?.id || cur;
-          });
+          const ready = overview.categories.find((c) => c.next?.status === 'READY');
+          const nextId = now.live ? now.matchId : ready?.next.id;
+          setId((cur) => nextId || cur);
         }
       } catch { /* keep showing what we have */ }
       timer = setTimeout(pick, 30000);
@@ -91,6 +91,7 @@ function Board({ view, envelope, tournament }) {
     const toss = view.match?.toss;
     return (
       <div className="flex h-full flex-col items-center justify-center gap-[3vh] text-center">
+        <img src={`${import.meta.env.BASE_URL}${BRAND.logo}`} alt="" className="h-[26vh] w-[26vh]" />
         <p className="text-[6vh] font-bold uppercase text-white/70">{tournament?.name}</p>
         <p className="text-[11vh] font-black uppercase leading-none">{teams[view.match.teamA]?.name} <span className="text-white/40">v</span> {teams[view.match.teamB]?.name}</p>
         {toss && <p className="text-[5vh] text-yellow-300">{teams[toss.winner]?.name} won the toss · chose to {toss.decision}</p>}
@@ -105,7 +106,7 @@ function Board({ view, envelope, tournament }) {
   return (
     <div className="flex h-full flex-col px-[3vw] py-[2.5vh]">
       <div className="flex items-center justify-between text-[3.6vh] font-bold uppercase tracking-wide text-white/60">
-        <span>{tournament?.shortName || tournament?.name} · Match {view.match.number}</span>
+        <span className="flex items-center gap-[1vw]"><img src={`${import.meta.env.BASE_URL}${BRAND.logoSmall}`} alt="" className="h-[6vh] w-[6vh]" />{tournament?.shortName || tournament?.name} · {view.match.category ? `${view.match.category.name} ` : ''}Match {view.match.number}</span>
         <span>{teams[view.match.teamA]?.shortName} v {teams[view.match.teamB]?.shortName}</span>
       </div>
 
@@ -167,7 +168,14 @@ function App() {
 
   return (
     <div className="relative h-full">
-      {!id && <div className="flex h-full items-center justify-center text-[8vh] font-black uppercase text-white/70">{tournament?.name || 'Scoreboard'}<br /><span className="text-[4vh] font-normal">Waiting for the next match…</span></div>}
+      {!id && (
+        <div className="flex h-full flex-col items-center justify-center gap-[3vh] text-center">
+          <img src={`${import.meta.env.BASE_URL}${BRAND.logo}`} alt="" className="h-[42vh] w-[42vh]" />
+          <p className="text-[7vh] font-black uppercase leading-none text-white/85">{tournament?.name || BRAND.name}</p>
+          <p className="text-[4vh] text-white/50">Waiting for the next match…</p>
+          <p className="absolute bottom-[2vh] text-[2.2vh] tracking-widest text-white/30">{studioCredit()}</p>
+        </div>
+      )}
       {id && !view && <div className="flex h-full items-center justify-center text-[5vh] text-white/50">Loading…</div>}
       {view && <Board view={view} envelope={lastEnvelope} tournament={tournament} />}
       <span className={`absolute bottom-[1vh] right-[1vh] h-[1.2vh] w-[1.2vh] rounded-full ${dot}`} title={status} />

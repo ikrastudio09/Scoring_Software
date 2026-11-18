@@ -1,6 +1,6 @@
 {
-  "appId": "com.cricketscoring.tournament",
-  "appName": "Live Cricket",
+  "appId": "score.ikrastudio.in",
+  "appName": "Maheshwari Premier League 2026",
   "webDir": "dist",
   "server": {
     "androidScheme": "https"
@@ -12,7 +12,7 @@
     "SplashScreen": {
       "launchShowDuration": 3000,
       "launchAutoHide": false,
-      "backgroundColor": "#0f766e",
+      "backgroundColor": "rgb(11, 11, 11)",
       "showSpinner": false,
       "androidScaleType": "CENTER_CROP"
     }

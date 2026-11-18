@@ -55,7 +55,10 @@ export function makeEnvelope(rt, type, effects, live, ball) {
 export function ballSummary(rt) {
   const e = commentaryEntry(rt, rt.lastSeq);
   if (!e) return null;
-  const ball = { seq: e.seq, innings: e.innings, over: e.over, kind: e.kind, label: e.label, runs: e.runs, score: e.score, text: e.text, scoreText: e.scoreText };
+  const ball = {
+    seq: e.seq, innings: e.innings, over: e.over, kind: e.kind, label: e.label, runs: e.runs, score: e.score,
+    batter: e.batter, bowler: e.bowler, extra: e.extra, wicket: e.wicket, text: e.text, scoreText: e.scoreText,
+  };
   if (e.milestones.length) ball.milestones = e.milestones;
   if (e.endOfOver) ball.endOfOver = e.endOfOver;
   return ball;

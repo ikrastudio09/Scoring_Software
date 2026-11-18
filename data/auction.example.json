@@ -1,14 +1,21 @@
 {
+  "category": "mens",
   "players": [
     { "playerID": 1024, "playerName": "Rahul Patil", "Age": 27, "playerType": "All Rounder", "playerPhone": "not imported",
       "playerPhoto": { "url": "https://res.cloudinary.com/demo/image/upload/sample.jpg", "public_id": "sample" },
-      "playingStyle": ["Right Arm Batting", "Right Arm Balling"], "soldPoints": 450000, "playerStatus": "sold", "playerPool": 2 },
+      "playingStyle": ["Right Arm Batting", "Right Arm Balling"], "soldPoints": 450000, "playerStatus": "sold", "playerPool": 2,
+      "previousTeam": "SGM STRIKERS", "previousTeamPoints": 3000,
+      "previousPerformance": "ASD:- S-6, M-31, R-145, W-7, C-10, MOM-6 | 2025:- M-6, R-20, W-2, C-1" },
     { "playerID": 1025, "playerName": "Jitendra Rao", "Age": 30, "playerType": "Bowler", "playerPhone": "not imported",
       "playerPhoto": { "url": "https://res.cloudinary.com/demo/image/upload/sample.jpg", "public_id": "sample" },
-      "playingStyle": ["Left Arm Batting", "Left Arm Balling"], "soldPoints": 300000, "playerStatus": "sold", "playerPool": 3 },
+      "playingStyle": ["Left Arm Batting", "Left Arm Balling"], "soldPoints": 300000, "playerStatus": "sold", "playerPool": 3,
+      "previousTeam": "NULL", "previousTeamPoints": "NULL",
+      "previousYearPerformance": null,
+      "overallPreviousPerformance": { "seasons": 4, "matches": 18, "runs": 40, "wickets": 21, "ballsBowled": 300, "runsConceded": 410, "catches": 5 } },
     { "playerID": 1026, "playerName": "Abdul Danish", "Age": 22, "playerType": "Wicket Keeper", "playerPhone": "not imported",
       "playerPhoto": { "url": "https://res.cloudinary.com/demo/image/upload/sample.jpg", "public_id": "sample" },
-      "playingStyle": ["Right Arm Batting"], "soldPoints": 0, "playerStatus": "unsold", "playerPool": 4 }
+      "playingStyle": ["Right Arm Batting"], "soldPoints": 0, "playerStatus": "unsold", "playerPool": 4,
+      "previousTeam": "N/A", "previousTeamPoints": 0, "previousPerformance": "N/A" }
   ],
   "teams": [
     { "teamID": 7, "teamName": "SGM Strikers", "teamTotalPoints": 8000000,

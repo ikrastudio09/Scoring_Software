@@ -8,6 +8,9 @@ import { createSocketServer } from './realtime/socket.js';
 import { ensureBootstrapAdmin } from './services/auth.js';
 import { reconcileMatches } from './services/scoring.js';
 import { getTournament } from './services/tournament.js';
+import { ensureCategories, migrateLegacyData } from './services/categories.js';
+import { repairActiveLock } from './services/active.js';
+import { ensureIdentities } from './services/identities.js';
 import { logger } from './utils/logger.js';
 import { metrics } from './utils/metrics.js';
 
@@ -17,8 +20,12 @@ export async function startServer({ port = config.port, mongoUri } = {}) {
   await import('./models/index.js').then((m) => Promise.all(Object.values(m).map((Model) => Model.syncIndexes())));
   await ensureBootstrapAdmin();
   await getTournament();
+  await ensureCategories();
+  await migrateLegacyData();
+  await ensureIdentities();
   const repair = await reconcileMatches();
   if (repair.repaired) logger.warn(repair, 'repaired match documents from event log');
+  await repairActiveLock();
 
   const app = createApp();
   const server = http.createServer(app);

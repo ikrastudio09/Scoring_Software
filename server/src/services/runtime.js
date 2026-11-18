@@ -9,7 +9,7 @@ import { buildCommentary, normalizeBonus, replay, toLiveView, toScorerView, toSc
 import { KeyedMutex } from '../utils/async.js';
 import { AppError, notFound } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import { getTournament } from './tournament.js';
+import { categoryConfig, categoryOf } from './categories.js';
 
 const cache = new Map();
 const loading = new Map();
@@ -40,18 +40,20 @@ export function buildSetup(match) {
 async function buildMeta(match) {
   const teamIds = [match.teamA, match.teamB].filter(Boolean);
   const playerIds = [...(match.playingXI?.teamA || []), ...(match.playingXI?.teamB || [])];
-  const [teams, players, t] = await Promise.all([
+  const [teams, players, cat] = await Promise.all([
     Team.find({ _id: { $in: teamIds } }, 'name shortName color logoUrl').lean(),
     Player.find({ _id: { $in: playerIds } }, 'name').lean(),
-    getTournament(),
+    categoryOf(match),
   ]);
+  const { points } = await categoryConfig(cat);
   // Bonus points only matter for matches that count toward the points table.
-  const counted = (t.points?.stages?.length ? t.points.stages : ['league']).includes(match.stage || 'league');
+  const counted = (points?.stages?.length ? points.stages : ['league']).includes(match.stage || 'league');
   return {
     matchId: String(match._id),
+    category: { id: String(cat._id), key: cat.key, name: cat.name },
     teams: Object.fromEntries(teams.map((t) => [String(t._id), { name: t.name, shortName: t.shortName, color: t.color, logoUrl: t.logoUrl }])),
     players: Object.fromEntries(players.map((p) => [String(p._id), { name: p.name }])),
-    bonus: counted ? normalizeBonus(t.points?.bonus) : null,
+    bonus: counted ? normalizeBonus(points?.bonus) : null,
   };
 }
 
@@ -154,7 +156,7 @@ function decorate(rt, view) {
     ...view,
     version: rt.lastSeq,
     match: {
-      number: m.number, status: m.status, stage: m.stage, venue: m.venue, scheduledAt: m.scheduledAt,
+      number: m.number, category: rt.meta.category, status: m.status, stage: m.stage, venue: m.venue, scheduledAt: m.scheduledAt,
       teamA: m.teamA ? String(m.teamA) : null, teamB: m.teamB ? String(m.teamB) : null,
       toss: m.toss?.winner ? { winner: String(m.toss.winner), decision: m.toss.decision } : null,
       resultConfirmed: Boolean(m.result?.confirmed),

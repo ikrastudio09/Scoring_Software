@@ -96,3 +96,38 @@ describe('deterministic commentary', () => {
     expect(sim.inn.runs).toBe(1);
   });
 });
+
+describe('milestones and key moments', () => {
+  it('a maiden over is called', () => {
+    const sim = new Sim().start().dots(6);
+    expect(last(sim).endOfOver).toMatchObject({ maiden: true, runs: 0 });
+    expect(last(sim).endOfOver.text).toMatch(/maiden/i);
+    const sim2 = new Sim().start().dots(5).legbye(1); // leg byes are not charged to the bowler
+    expect(last(sim2).endOfOver.maiden).toBe(true);
+    const sim3 = new Sim().start().wide().dots(6);
+    expect(last(sim3).endOfOver.maiden).toBe(false);
+  });
+
+  it('three wickets and a hat-trick for the bowler; a run out does not count', () => {
+    const sim = new Sim(makeSetup({ oversPerInnings: 3, maxOversPerBowler: 3 })).start()
+      .out('bowled').newBatter('a3')
+      .out('lbw').newBatter('a4');
+    const third = sim.out('caught', { fielderId: 'b2' });
+    const ms = last(third).milestones;
+    expect(ms).toContain('HAT-TRICK for B1!');
+    expect(ms).toContain('Three wickets for B1!');
+
+    // a run out in between breaks nothing for the bowler's count but is not credited
+    const s2 = new Sim(makeSetup({ oversPerInnings: 3 })).start()
+      .out('bowled').newBatter('a3')
+      .out('run_out', { batterId: 'a3', fielderId: 'b4' }).newBatter('a4');
+    expect(last(s2.out('bowled')).milestones.some((m) => m.startsWith('HAT-TRICK'))).toBe(false);
+  });
+
+  it('the match-winning ball says who won', () => {
+    const sim = new Sim(makeSetup({ oversPerInnings: 1 })).start().ball(1).dots(5);
+    sim.start2().four();
+    const e = last(sim);
+    expect(e.milestones).toContain('Bravo win by 10 wickets! The chase is complete.');
+  });
+});

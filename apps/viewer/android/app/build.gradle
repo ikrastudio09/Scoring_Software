@@ -10,6 +10,13 @@ if (keystoreFile.exists()) keystoreFile.withInputStream { keystoreProps.load(it)
 def ks = { key, env -> keystoreProps.getProperty(key) ?: System.getenv(env) }
 def hasReleaseKey = ks('storeFile', 'CRICKET_KEYSTORE_FILE') != null
 
+// Cleartext (plain HTTP) is allowed only in builds made for an http:// API on the local network.
+// `npm run cap:sync` writes network.properties from VITE_API_URL; without it, cleartext stays off.
+def networkProps = new Properties()
+def networkFile = file('network.properties')
+if (networkFile.exists()) networkFile.withInputStream { networkProps.load(it) }
+def usesCleartextTraffic = networkProps.getProperty('usesCleartextTraffic') == 'true' ? 'true' : 'false'
+
 android {
     namespace "com.cricketscoring.tournament"
     compileSdk rootProject.ext.compileSdkVersion
@@ -20,7 +27,10 @@ android {
         // Bump for every Play Store upload (or pass -PversionCode=N -PversionName=x.y.z).
         versionCode Integer.parseInt((project.findProperty('versionCode') ?: '1').toString())
         versionName project.findProperty('versionName') ?: '1.0.0'
-        manifestPlaceholders = [appLinkHost: project.findProperty('appLinkHost') ?: 'scores.example.com']
+        manifestPlaceholders = [
+            appLinkHost: project.findProperty('appLinkHost') ?: 'scores.example.com',
+            usesCleartextTraffic: usesCleartextTraffic,
+        ]
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

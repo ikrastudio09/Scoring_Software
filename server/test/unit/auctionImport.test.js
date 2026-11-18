@@ -26,8 +26,10 @@ describe('auction import validation', () => {
     expect(r.data.players.map((p) => [p.playerID, p.teamID, p.status])).toEqual([[1024, 7, 'sold'], [1025, 8, 'sold']]);
     expect(r.data.players[0]).toMatchObject({ photoUrl: 'https://img.example/1024.jpg', playingStyle: ['Right Arm Batting', 'Left Arm Balling'], soldPoints: 450000, playerPool: 2 });
     // private data never makes it into the snapshot
-    expect(JSON.stringify(r.data)).not.toMatch(/9999999999|playerPhone|Age|public_id/);
-    expect(r.info.map((i) => i.code)).toEqual(['PRIVATE_DATA_DROPPED', 'UNSOLD_SKIPPED']);
+    // the phone never makes it into the snapshot; Age is kept (private, admin-only)
+    expect(JSON.stringify(r.data)).not.toMatch(/9999999999|playerPhone|public_id/);
+    expect(r.data.players[0].age).toBe(25);
+    expect(r.info.map((i) => i.code)).toEqual(['PRIVATE_DATA_DROPPED', 'AGE_PRIVATE', 'UNSOLD_SKIPPED']);
   });
 
   it('accepts flat spreadsheet rows (one row per team member) and text numbers', () => {
@@ -98,5 +100,34 @@ describe('auction import validation', () => {
     expect(shortNameFor('SGM Strikers', taken)).toBe('SGM');
     expect(shortNameFor('Super Stars', taken)).toBe('SS2');
     expect(shortNameFor('Royals', taken)).toBe('ROY');
+  });
+});
+
+describe('auction snapshot v2: PDF-style sheet columns', () => {
+  // A CSV/XLSX row with the column headings of the MPL player list (all values are strings).
+  const row = (id, name, extra) => ({
+    playerID: String(id), 'Player Name': name, 'Mobile No.': '9000000000', Age: '30', 'Previous Team': 'SSK WARRIORS',
+    'Previous Points': '3000', 'Previous Statistics': 'ASD:- S-10, M-63, R-380, W-57, C-18, MOM-10 | 2024:- M-10, R-41, W-4, C-3',
+    playerStatus: 'sold', teamID: '1', teamName: 'Royal Strikers', ...extra,
+  });
+
+  it('reads age, previous team and both aggregates; never keeps the phone', () => {
+    const r = validateAuctionImport({ players: [row(1, 'KISHAN BAJAJ'), row(2, 'AJAY SARDA', { Age: '1', 'Previous Team': 'NULL', 'Previous Points': 'NULL', 'Previous Statistics': 'N/A' })], teams: [] });
+    expect(r.ok).toBe(true);
+    const [kishan, ajay] = r.data.players;
+    expect(kishan).toMatchObject({ name: 'KISHAN BAJAJ', age: 30, previousSeason: { team: 'SSK WARRIORS', points: 3000 } });
+    expect(kishan.history.previousYear).toMatchObject({ seasons: 1, matches: 10, runs: 41 });
+    expect(kishan.history.overallPrevious).toMatchObject({ seasons: 9, matches: 53, runs: 339 });
+    expect(ajay).toMatchObject({ age: null, previousSeason: null, history: { previousYear: null, overallPrevious: null } });
+    expect(codes({ errors: r.warnings })).toEqual(expect.arrayContaining(['AGE_INVALID', 'HISTORY_MOM_UNRELIABLE']));
+    expect(r.info.find((i) => i.code === 'PRIVATE_DATA_DROPPED').message).toMatch(/2 players/);
+    expect(JSON.stringify(r.data)).not.toMatch(/9000000000/);
+  });
+
+  it('unreadable statistics are a warning, not a blocked import', () => {
+    const r = validateAuctionImport({ players: [row(1, 'X', { 'Previous Statistics': 'ASD S10 M63' })], teams: [] });
+    expect(r.ok).toBe(true);
+    expect(r.warnings.map((w) => w.code)).toContain('HISTORY_UNREADABLE');
+    expect(r.data.players[0].history).toMatchObject({ previousYear: null, overallPrevious: null });
   });
 });

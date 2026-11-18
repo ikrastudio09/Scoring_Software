@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Live Cricket</string>
-    <string name="title_activity_main">Live Cricket</string>
-    <string name="package_name">com.cricketscoring.tournament</string>
-    <string name="custom_url_scheme">com.cricketscoring.tournament</string>
+    <string name="app_name">Maheshwari Premier League</string>
+    <string name="title_activity_main">MPL 2026</string>
+    <string name="package_name">score.ikrastudio.in</string>
+    <string name="custom_url_scheme">score.ikrastudio.in</string>
 </resources>

@@ -1,6 +1,6 @@
-import { Link } from 'react-router';
 import { Card, StatusBadge, TeamLogo } from './ui.jsx';
 import { fmtDateTime, STAGE_LABEL } from '../lib/format.js';
+import { CatLink } from '../lib/category.jsx';
 
 function TeamRow({ team, innings, winner, chasing }) {
   const score = innings?.find((i) => i.team === team?.id);
@@ -21,7 +21,7 @@ function TeamRow({ team, innings, winner, chasing }) {
 }
 
 /** Compact card used on lists. `live` (optional) overrides the stored summary with realtime data. */
-export default function MatchCard({ match, live }) {
+export default function MatchCard({ match, live, cat }) {
   const innings = live
     ? live.innings.map((i) => ({ team: i.battingTeam, runs: i.runs, wickets: i.wickets, overs: i.overs }))
     : match.summary?.innings;
@@ -38,7 +38,7 @@ export default function MatchCard({ match, live }) {
   }
 
   return (
-    <Link to={`/matches/${match.id}`} className="block">
+    <CatLink to={`/matches/${match.id}`} cat={cat} className="block">
       <Card className="p-4 transition hover:ring-brand/40">
         <div className="mb-3 flex items-center justify-between gap-2 text-xs text-slate-500">
           <span className="truncate">
@@ -56,6 +56,6 @@ export default function MatchCard({ match, live }) {
           <p className={`mt-3 text-xs ${resultText ? 'font-medium text-emerald-700' : 'text-slate-500'}`}>{footer || match.venue}</p>
         )}
       </Card>
-    </Link>
+    </CatLink>
   );
 }

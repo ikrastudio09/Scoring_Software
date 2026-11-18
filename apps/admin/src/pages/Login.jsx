@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '../lib/auth.jsx';
+import { BRAND, studioCredit } from '@cricket/shared';
 import { Button, Card, ErrorBox, Field, Input } from '../components/ui.jsx';
 
 export default function Login() {
@@ -27,10 +28,11 @@ export default function Login() {
   };
 
   return (
-    <div className="flex min-h-dvh items-center justify-center p-4">
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-4 p-4">
       <Card className="w-full max-w-sm p-6">
-        <h1 className="text-xl font-bold">Scorer console</h1>
-        <p className="mb-5 text-sm text-slate-500">Sign in to score matches and manage the tournament.</p>
+        <img src={`${import.meta.env.BASE_URL}${BRAND.logo}`} alt={BRAND.name} width="96" height="96" className="mx-auto mb-3 h-24 w-24" />
+        <h1 className="text-center text-xl font-bold">{BRAND.shortName} {BRAND.season} · Scorer console</h1>
+        <p className="mb-5 text-center text-sm text-slate-500">Sign in to score matches and manage the tournament.</p>
         <form onSubmit={submit} className="space-y-3">
           <Field label="Username"><Input autoComplete="username" autoFocus value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} /></Field>
           <Field label="Password"><Input type="password" autoComplete="current-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
@@ -38,6 +40,7 @@ export default function Login() {
           <Button type="submit" className="w-full" size="py-2.5" disabled={busy || !form.username || !form.password}>{busy ? 'Signing in…' : 'Sign in'}</Button>
         </form>
       </Card>
+      <p className="text-xs text-slate-400">{BRAND.name} · {studioCredit()}</p>
     </div>
   );
 }

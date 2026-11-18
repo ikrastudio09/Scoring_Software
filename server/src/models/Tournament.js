@@ -1,12 +1,15 @@
 import mongoose from 'mongoose';
 
-// Exactly one document (key = "main"). Rules are defaults copied into each match at creation,
-// so editing them never changes a match that has already been set up.
+// Exactly one document (key = "main"): the league and its season-level settings. rules / points /
+// impactWeights are the SEASON DEFAULTS; each category may override them (models/Category.js).
+// Rules are copied into each match at creation, so editing them never changes a set-up match.
 const tournamentSchema = new mongoose.Schema({
   key: { type: String, default: 'main', unique: true },
   name: { type: String, required: true, trim: true },
   shortName: { type: String, trim: true },
   season: { type: String, trim: true },
+  // The season being played (MPL Season 21). Categories are created for this season.
+  currentSeason: { type: Number, default: 21, min: 1 },
   description: String,
   logoUrl: String,
   primaryColor: { type: String, default: '#0f766e' },

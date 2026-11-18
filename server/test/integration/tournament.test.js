@@ -86,8 +86,11 @@ describe('full tournament', () => {
 
     // ── statistics are reproducible from the event log ──
     const lbBefore = (await ctx.http.get('/api/stats/leaderboards').expect(200)).body;
-    expect(lbBefore.mostRuns.length).toBe(10);
-    expect(lbBefore.mostWickets.length).toBe(10);
+    // Top 10, plus anyone tied with 10th place (a shared place is never cut off).
+    for (const board of [lbBefore.mostRuns, lbBefore.mostWickets]) {
+      expect(board.length).toBeGreaterThanOrEqual(10);
+      expect(board.slice(10).every((r) => r.rank === board[9].rank)).toBe(true);
+    }
     expect(lbBefore.totals.matches).toBe(78);
 
     let totalRuns = 0;

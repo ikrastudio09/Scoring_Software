@@ -5,6 +5,7 @@ const { ObjectId } = mongoose.Schema.Types;
 // DERIVED from match events when a result is confirmed. Safe to delete and rebuild.
 const playerMatchStatSchema = new mongoose.Schema({
   match: { type: ObjectId, ref: 'Match', required: true },
+  category: { type: ObjectId, ref: 'Category' },
   player: { type: ObjectId, ref: 'Player', required: true },
   team: { type: ObjectId, ref: 'Team', required: true },
   opponent: { type: ObjectId, ref: 'Team' },
@@ -23,5 +24,6 @@ const playerMatchStatSchema = new mongoose.Schema({
 playerMatchStatSchema.index({ match: 1, player: 1 }, { unique: true });
 playerMatchStatSchema.index({ player: 1 });
 playerMatchStatSchema.index({ team: 1 });
+playerMatchStatSchema.index({ category: 1 });
 
 export const PlayerMatchStat = mongoose.model('PlayerMatchStat', playerMatchStatSchema);

@@ -81,3 +81,9 @@ export const publicLimiter = rateLimit({
   windowMs: 60_000, limit: config.rateLimit.publicPerMinute, standardHeaders: 'draft-7', legacyHeaders: false, handler: limitHandler,
   skip: (req) => config.isTest || req.method !== 'GET' || Boolean(verifyToken(bearer(req))),
 });
+
+// What-if simulations run the qualification search on the server: a separate, tighter budget.
+export const whatIfLimiter = rateLimit({
+  windowMs: 60_000, limit: config.rateLimit.whatIfPerMinute, standardHeaders: 'draft-7', legacyHeaders: false, handler: limitHandler,
+  skip: () => config.isTest,
+});

@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
-import { Link } from 'react-router';
 import { formatNrr } from '@cricket/shared';
 import { useApi } from '@cricket/client';
+import { CatLink, useCategory } from '../lib/category.jsx';
 import { api, live } from '../lib/runtime.js';
 import { Card, ErrorState, Spinner, TeamLogo } from '../components/ui.jsx';
 
@@ -9,14 +9,18 @@ const TIEBREAK = { nrr: 'net run rate', wins: 'wins', headToHead: 'head-to-head'
 const FORM = { W: 'bg-emerald-500', L: 'bg-red-500', T: 'bg-slate-400', N: 'bg-slate-300' };
 
 export default function Points() {
-  const { data, error, reload } = useApi(api, '/points-table');
-  useEffect(() => live.onTournament((e) => { if (e.type === 'POINTS_TABLE_UPDATED') reload(); }), [reload]);
+  const { scoped, key } = useCategory();
+  const { data, error, reload } = useApi(api, scoped('/points-table'));
+  useEffect(() => live.onTournament((e) => { if (e.type === 'POINTS_TABLE_UPDATED' && (!e.category || e.category === key)) reload(); }), [reload, key]);
   if (error && !data) return <ErrorState error={error} onRetry={reload} />;
   if (!data) return <Spinner />;
   const r = data.rules;
   return (
     <div>
-      <h1 className="mb-3 text-xl font-bold tracking-tight">Points table</h1>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h1 className="text-xl font-bold tracking-tight">Points table</h1>
+        <CatLink to="/qualification" className="text-sm font-medium text-brand">Qualification scenarios →</CatLink>
+      </div>
       {data.groups.map((g) => (
         <Card key={g.group || 'all'} className="mb-4 overflow-hidden">
           {data.groups.length > 1 && <p className="bg-slate-50 px-4 py-2 text-sm font-semibold">Group {g.group}</p>}
@@ -38,12 +42,12 @@ export default function Points() {
                   <tr key={row.team.id} className="border-b border-slate-50 last:border-0">
                     <td className="py-2.5 pl-4 text-slate-500 tnum">{row.position}</td>
                     <td>
-                      <Link to={`/teams/${row.team.id}`} className="flex items-center gap-2 font-medium hover:text-brand">
+                      <CatLink to={`/teams/${row.team.id}`} className="flex items-center gap-2 font-medium hover:text-brand">
                         <span className="hidden sm:inline-flex"><TeamLogo team={row.team} size="h-7 w-7 text-[9px]" /></span>
                         <span className="h-2.5 w-2.5 shrink-0 rounded-full sm:hidden" style={{ background: row.team.color }} />
                         <span className="hidden sm:inline">{row.team.name}</span>
                         <span className="sm:hidden">{row.team.shortName}</span>
-                      </Link>
+                      </CatLink>
                     </td>
                     {[row.played, row.won, row.lost, row.tied, row.noResult].map((v, i) => <td key={i} className={`text-center tnum ${i > 2 ? 'hidden sm:table-cell' : ''}`}>{v}</td>)}
                     {r.bonus?.enabled && <td className="hidden text-center tnum sm:table-cell">{row.bonus}</td>}

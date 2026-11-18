@@ -1,14 +1,23 @@
 // Points table and team statistics: DERIVED from confirmed match results.
 
+// Every table is per category: only that category's teams and confirmed matches are considered.
+
 import { Match, Team } from '../models/index.js';
-import { getTournament } from './tournament.js';
+import { categoryConfig, categoryOf } from './categories.js';
 import { bonusPointWinner, normalizeBonus } from '../engine/index.js';
 
-let cache = null;
-export function invalidatePoints() { cache = null; }
+const cache = new Map(); // categoryId → table
+/** Drop the cached table of one category (or of all categories). */
+export function invalidatePoints(categoryId) {
+  if (categoryId) cache.delete(String(categoryId)); else cache.clear();
+}
 
-/** The team that earned a bonus point in this match, or null (rules.bonus off → never). */
+/**
+ * The team that earned a bonus point in this match, or null (rules.bonus off → never).
+ * A hypothetical result without scores (what-if) states it directly as `m.bonusWinner`.
+ */
 function bonusTeam(m, rules) {
+  if (m.bonusWinner !== undefined) return rules.bonus?.enabled ? m.bonusWinner : null;
   const [first, second] = m.summary?.innings || [];
   return bonusPointWinner(first, second, m.result, rules.bonus);
 }
@@ -116,8 +125,8 @@ export function sortTable(rows, matches, rules) {
   return rows;
 }
 
-async function confirmedMatches(stages) {
-  const q = { 'result.confirmed': true };
+async function confirmedMatches(categoryId, stages) {
+  const q = { category: categoryId, 'result.confirmed': true };
   if (stages) q.stage = { $in: stages };
   const docs = await Match.find(q, 'teamA teamB result summary rules stage number scheduledAt').lean();
   return docs.map((m) => ({
@@ -132,33 +141,48 @@ async function confirmedMatches(stages) {
   }));
 }
 
-export async function getPointsTable() {
-  if (cache) return cache;
-  const t = await getTournament();
-  const teams = (await Team.find({}, 'name shortName color logoUrl group').lean())
+/** Everything a points table is computed from (also used by the qualification predictor). */
+export async function tableInputs(category) {
+  const cfg = await categoryConfig(category);
+  const teams = (await Team.find({ category: category._id }, 'name shortName color logoUrl group').lean())
     .map((x) => ({ id: String(x._id), name: x.name, shortName: x.shortName, color: x.color, logoUrl: x.logoUrl, group: x.group || null }));
-  const matches = await confirmedMatches(t.points.stages);
-  const rules = { ...t.points, bonus: normalizeBonus(t.points.bonus) };
+  const matches = await confirmedMatches(category._id, cfg.points.stages);
+  const rules = { ...cfg.points, bonus: normalizeBonus(cfg.points.bonus) };
+  return { cfg, teams, matches, rules };
+}
+
+/** One table per group (teams without a group form one table). */
+export function groupTables(teams, matches, rules) {
   const groups = [...new Set(teams.map((x) => x.group))].sort();
-  const tables = groups.map((g) => ({
-    group: g,
-    rows: computeTable(teams.filter((x) => x.group === g), matches, rules),
-  }));
-  cache = {
+  return groups.map((g) => ({ group: g, rows: computeTable(teams.filter((x) => x.group === g), matches, rules) }));
+}
+
+/** The points table of one category (a category document). */
+export async function getPointsTable(category) {
+  const key = String(category._id);
+  if (cache.has(key)) return cache.get(key);
+  const { cfg, teams, matches, rules } = await tableInputs(category);
+  const t = { points: cfg.points };
+  const tables = groupTables(teams, matches, rules);
+  const table = {
     builtAt: new Date().toISOString(),
+    category: { id: key, key: category.key, name: category.name },
+    qualificationSlots: cfg.qualification.slots,
     rules: {
       win: t.points.win, loss: t.points.loss, tie: t.points.tie, noResult: t.points.noResult, stages: t.points.stages,
       nrrAllOutUsesFullQuota: t.points.nrrAllOutUsesFullQuota, bonus: rules.bonus, tiebreakers: t.points.tiebreakers?.length ? t.points.tiebreakers : ['nrr', 'wins', 'headToHead'],
     },
     groups: tables,
   };
-  return cache;
+  cache.set(key, table);
+  return table;
 }
 
 /** Team record across all confirmed matches (all stages). */
-export async function getTeamRecord(teamId) {
-  const id = String(teamId);
-  const matches = (await confirmedMatches(null)).filter((m) => m.teamA === id || m.teamB === id);
+export async function getTeamRecord(team) {
+  const id = String(team._id);
+  const category = await categoryOf(team);
+  const matches = (await confirmedMatches(category._id, null)).filter((m) => m.teamA === id || m.teamB === id);
   const rec = { played: 0, won: 0, lost: 0, tied: 0, noResult: 0, runsScored: 0, runsConceded: 0, innings: 0, highest: null, lowest: null, recent: [] };
   for (const m of matches) {
     rec.played += 1;
@@ -188,7 +212,7 @@ export async function getTeamRecord(teamId) {
     opponent: m.teamA === id ? m.teamB : m.teamA,
     text: m.summary?.resultText || null,
   }));
-  const table = await getPointsTable();
+  const table = await getPointsTable(category);
   const row = table.groups.flatMap((g) => g.rows).find((r) => r.team.id === id);
   rec.points = row?.points ?? 0;
   rec.nrr = row?.nrr ?? 0;

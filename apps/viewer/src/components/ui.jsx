@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { CatLink } from '../lib/category.jsx';
 
 export function Card({ className = '', children, ...rest }) {
   return <div className={`rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 ${className}`} {...rest}>{children}</div>;
@@ -121,5 +121,5 @@ export function Tabs({ tabs, value, onChange }) {
 }
 
 export function PlayerLink({ id, children, className = '' }) {
-  return <Link to={`/players/${id}`} className={`hover:text-brand hover:underline ${className}`}>{children}</Link>;
+  return <CatLink to={`/players/${id}`} className={`hover:text-brand hover:underline ${className}`}>{children}</CatLink>;
 }

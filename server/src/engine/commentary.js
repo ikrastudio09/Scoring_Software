@@ -6,7 +6,7 @@
 // (seq → text) and replace the generated sentence; the factual score line is never editable.
 
 import { DISMISSAL_LABELS, formatOvers, runRate } from '@cricket/shared';
-import { normalizeRules } from './rules.js';
+import { isBowlerCredited, normalizeRules } from './rules.js';
 
 const pick = (list, seq) => list[((seq * 2654435761) >>> 0) % list.length];
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -16,6 +16,17 @@ const SHOT_PHRASE = {
   flick: 'flicked off the pads', pull: 'pulled', hook: 'hooked', cut: 'cut square', sweep: 'swept',
   reverse_sweep: 'reverse-swept', lofted: 'lofted', edge: 'off the edge', defence: 'defended', leave: 'left alone',
 };
+
+const MAIDEN = ['A maiden over. Excellent bowling.', 'Maiden! Not a run conceded.', 'A maiden — superb control.'];
+
+/** The match-winning moment, from the engine's own result (null if this ball did not decide it). */
+function winningLine(state, inn, team) {
+  const r = state.result;
+  if (!r || r.type !== 'win' || state.innings.at(-1) !== inn) return null;
+  if (r.superOver) return `${team(r.winner)} win the Super Over!`;
+  if (r.marginWickets !== undefined) return `${team(r.winner)} win by ${plural(r.marginWickets, 'wicket')}! The chase is complete.`;
+  return `${team(r.winner)} win by ${plural(r.marginRuns, 'run')}!`;
+}
 
 const DOT = ['no run.', 'no run, good ball.', 'dot ball.', 'no run, tight line.'];
 const DOT_SHOT = { defence: ['no run, solidly defended.', 'no run, played back to the bowler.'], leave: ['no run, left alone outside off.'] };
@@ -103,6 +114,8 @@ export function buildCommentary(state, setup, meta, overrides = new Map()) {
     let wickets = 0;
     let legal = 0;
     const batterRuns = new Map();
+    const bowlerWickets = new Map(); // credited wickets so far
+    const bowlerStreak = new Map(); // consecutive deliveries by a bowler that took a credited wicket
     const lastBall = inn.overs.at(-1)?.balls.at(-1);
 
     for (const over of inn.overs) {
@@ -126,6 +139,16 @@ export function buildCommentary(state, setup, meta, overrides = new Map()) {
           const b = inn.batters[ball.wicket.batter];
           milestones.push(`${name(ball.wicket.batter)} ${b.runs} (${b.balls}). ${team(inn.battingTeam)} ${runs}/${wickets}.`);
         }
+        // Bowling milestones: a credited wicket extends the bowler's streak; any other delivery by
+        // that bowler ends it (deliveries by the other bowler do not — that is the over break).
+        const credited = ball.wicket && isBowlerCredited(ball.wicket.type);
+        bowlerStreak.set(ball.bowler, credited ? (bowlerStreak.get(ball.bowler) || 0) + 1 : 0);
+        if (credited) {
+          const n = (bowlerWickets.get(ball.bowler) || 0) + 1;
+          bowlerWickets.set(ball.bowler, n);
+          if (bowlerStreak.get(ball.bowler) === 3) milestones.push(`HAT-TRICK for ${name(ball.bowler)}!`);
+          if (n === 3 || n === 5) milestones.push(`${n === 3 ? 'Three' : 'Five'} wickets for ${name(ball.bowler)}!`);
+        }
 
         const generated = `${name(ball.bowler)} to ${name(ball.batter)}, ${ball.wicket ? wicketText(ball, inn, meta) : outcomeText(ball, ball.seq)}`
           + (ball.freeHit ? ' (free hit)' : '');
@@ -145,6 +168,11 @@ export function buildCommentary(state, setup, meta, overrides = new Map()) {
           kind: kindOf(ball),
           label: ball.label,
           runs: ball.total,
+          // Who and what, so a ball message is self-describing without the live view.
+          batter: { id: ball.batter, name: name(ball.batter) },
+          bowler: { id: ball.bowler, name: name(ball.bowler) },
+          extra: ball.extra ? { type: ball.extra, runs: ball.total - ball.batRuns } : null,
+          wicket: ball.wicket ? { type: ball.wicket.type, batter: { id: ball.wicket.batter, name: name(ball.wicket.batter) } } : null,
           text: custom ?? generated,
           edited: custom !== undefined,
           score,
@@ -156,14 +184,16 @@ export function buildCommentary(state, setup, meta, overrides = new Map()) {
         const overDone = over.completed && ball === over.balls.at(-1);
         if (overDone) {
           const crr = runRate(runs, legal, bpo);
-          let text = `End of over ${over.index + 1}: ${plural(over.runs, 'run')}${over.wickets ? `, ${plural(over.wickets, 'wicket')}` : ''}. ${team(inn.battingTeam)} ${score}. CRR ${crr?.toFixed(2) ?? '-'}.`;
+          const maiden = over.bowlers.length === 1 && over.bowlerConceded === 0;
+          let text = `${maiden ? `${pick(MAIDEN, ball.seq)} ` : ''}End of over ${over.index + 1}: ${plural(over.runs, 'run')}${over.wickets ? `, ${plural(over.wickets, 'wicket')}` : ''}. ${team(inn.battingTeam)} ${score}. CRR ${crr?.toFixed(2) ?? '-'}.`;
           if (inn.target === null && legal < inn.maxBalls && crr !== null) {
             text += ` Projected ${Math.round((runs / legal) * inn.maxBalls)}.`;
           }
-          entry.endOfOver = { over: over.index + 1, runs: over.runs, wickets: over.wickets, score, text };
+          entry.endOfOver = { over: over.index + 1, runs: over.runs, wickets: over.wickets, maiden, score, text };
         }
         if (inn.status === 'COMPLETED' && ball === lastBall) {
-          entry.milestones.push(`End of innings: ${team(inn.battingTeam)} ${score} (${formatOvers(legal, bpo)} ov).`);
+          const win = winningLine(state, inn, team);
+          entry.milestones.push(win || `End of innings: ${team(inn.battingTeam)} ${score} (${formatOvers(legal, bpo)} ov).`);
         }
         out.push(entry);
       }

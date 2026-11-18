@@ -6,18 +6,20 @@ Android code base or backend: the app talks to the same public API and Socket.IO
 ## Requirements
 - JDK 21 (`JAVA_HOME`), Android SDK with platform 35 and build-tools 35
   (`ANDROID_HOME`, or `apps/viewer/android/local.properties` → `sdk.dir=…`).
-- A deployed server reachable over **HTTPS** (cleartext HTTP is disabled in the app).
+- A deployed server reachable over **HTTPS** for release builds. A laptop on the local network over
+  plain HTTP works for testing builds (see *Testing against a laptop* below).
 
 ## Configure
 ```bash
 cd apps/viewer
-cp .env.android.example .env.android      # VITE_API_URL=https://scores.example.com
+echo VITE_API_URL=https://scores.example.com > .env.android     # the server's full address
 ```
 - App id / name: `capacitor.config.json` (`appId` must be unique on Play; change it per tournament).
 - Icon & splash: edit `assets/*.svg`, then regenerate PNGs and run
   `npx capacitor-assets generate --android`.
 - Deep links: pass `-PappLinkHost=scores.example.com` to Gradle. Links such as
-  `https://scores.example.com/matches/<id>` then open the match screen in the app
+  `https://scores.example.com/mens/matches/<id>` (or the older `/matches/<id>`, which redirects to
+  the last category used) then open the match screen in the app
   (`src/lib/native.js` handles `appUrlOpen`). For verified App Links serve
   `/.well-known/assetlinks.json` (nginx block included) containing the release certificate's
   SHA-256 (`keytool -list -v -keystore release.jks`).
@@ -25,11 +27,36 @@ cp .env.android.example .env.android      # VITE_API_URL=https://scores.example.
 ## Build
 ```bash
 # from apps/viewer
-npm run build:android && npx cap sync android     # web bundle → android/app/src/main/assets
+npm run cap:sync      # web bundle → android/app/src/main/assets, WebView settings for VITE_API_URL
 cd android
 ./gradlew assembleDebug -PappLinkHost=scores.example.com
 #   → app/build/outputs/apk/debug/app-debug.apk   (install: adb install -r app-debug.apk)
 ```
+
+Always sync with `npm run cap:sync`, not `npx cap sync` or Android Studio's sync on their own:
+`scripts/cap-sync.mjs` sets the WebView origin and the cleartext permission to match the API (below).
+
+### Testing against a laptop on the local network (plain HTTP)
+Capacitor serves the app from `https://localhost`, and Android's WebView refuses **mixed content**
+(`MIXED_CONTENT_NEVER_ALLOW`, the default for apps targeting Android 5+): an `https://` page can
+never call an `http://` API — REST, Socket.IO polling and WebSockets are all blocked, and the app
+shows *"Reconnecting…"* forever. Therefore `npm run cap:sync` reads `VITE_API_URL` and:
+
+| `VITE_API_URL` | App served from | Cleartext HTTP |
+|---|---|---|
+| `https://…` (production) | `https://localhost` | off |
+| `http://192.168.x.x:4000` (laptop) | `http://localhost` | on (that build only) |
+
+1. Server: `HOST=0.0.0.0` in `server/.env`, allow port 4000 through the laptop's firewall; check
+   `http://<laptop-ip>:4000/api/health` in the phone's browser.
+2. `apps/viewer/.env.android`: `VITE_API_URL=http://<laptop-ip>:4000`
+3. `npm run cap:sync`, then `cd android && ./gradlew assembleDebug` (Windows cmd: `gradlew.bat assembleDebug`).
+4. The console prints `app served from http://localhost, cleartext HTTP on`. Never ship that build:
+   switch `VITE_API_URL` back to `https://…` and sync again before a release build.
+
+Debugging the WebView: with the phone on USB debugging, open `chrome://inspect` on the laptop and
+inspect the app. A `[viewer] Mixed content` error in the console means the build was synced
+without `npm run cap:sync`.
 
 ### Release (direct download APK and Play Store AAB)
 1. Create a signing key once and keep it safe (losing it means you can never update the app):

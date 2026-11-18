@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useApi } from '@cricket/client';
 import { api } from '../lib/runtime.js';
+import { useCategory } from '../lib/category.jsx';
 import { useAuth } from '../lib/auth.jsx';
 import { Button, Card, ErrorBox, Field, Input, Modal, PageHeader, Select, Spinner, useToast } from '../components/ui.jsx';
 
@@ -8,12 +9,13 @@ const ROLES = [['batter', 'Batter'], ['bowler', 'Bowler'], ['allrounder', 'All-r
 
 function TeamForm({ initial, onClose, onSaved }) {
   const toast = useToast();
+  const { key } = useCategory();
   const [f, setF] = useState(initial);
   const [err, setErr] = useState(null);
   const save = async () => {
     const body = { name: f.name, shortName: f.shortName, color: f.color, group: f.group || undefined, logoUrl: f.logoUrl || undefined, homeGround: f.homeGround || undefined };
     try {
-      if (f.id) await api.put(`/teams/${f.id}`, body); else await api.post('/teams', body);
+      if (f.id) await api.put(`/teams/${f.id}`, body); else await api.post('/teams', { ...body, category: key });
       toast('Team saved', 'success');
       onSaved();
       onClose();
@@ -96,7 +98,8 @@ function Squad({ team, isAdmin }) {
 export default function Teams() {
   const { isAdmin } = useAuth();
   const toast = useToast();
-  const { data, error, reload } = useApi(api, '/teams');
+  const { scoped, category } = useCategory();
+  const { data, error, reload } = useApi(api, scoped('/teams'));
   const [open, setOpen] = useState(null);
   const [form, setForm] = useState(null);
   if (error && !data) return <ErrorBox error={error} onRetry={reload} />;
@@ -107,7 +110,7 @@ export default function Teams() {
   };
   return (
     <div>
-      <PageHeader title={`Teams (${data.teams.length})`}>{isAdmin && <Button onClick={() => setForm({ name: '', shortName: '', color: '#334155' })}>New team</Button>}</PageHeader>
+      <PageHeader title={`${category?.name || ''} teams (${data.teams.length})`}>{isAdmin && <Button onClick={() => setForm({ name: '', shortName: '', color: '#334155' })}>New team</Button>}</PageHeader>
       <div className="space-y-2">
         {data.teams.map((t) => (
           <Card key={t.id} className="overflow-hidden">

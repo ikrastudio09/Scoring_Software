@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router';
 import { useApi } from '@cricket/client';
 import { api, live } from '../lib/runtime.js';
 import MatchCard from '../components/MatchCard.jsx';
+import { useCategory } from '../lib/category.jsx';
 import { Empty, ErrorState, Spinner, Tabs } from '../components/ui.jsx';
 import { dayKey, fmtDate, isLive } from '../lib/format.js';
 
@@ -15,7 +16,8 @@ const TABS = [
 export default function Matches() {
   const [params, setParams] = useSearchParams();
   const tab = params.get('tab') || 'fixtures';
-  const { data, error, loading, reload } = useApi(api, '/matches');
+  const { scoped } = useCategory();
+  const { data, error, loading, reload } = useApi(api, scoped('/matches'));
   useEffect(() => live.onTournament((e) => { if (e.type === 'MATCH_STATUS_CHANGED') reload(); }), [reload]);
 
   const groups = useMemo(() => {

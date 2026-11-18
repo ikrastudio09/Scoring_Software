@@ -8,7 +8,9 @@ import { logger } from '../utils/logger.js';
 import { metrics } from '../utils/metrics.js';
 import { getRuntime, invalidateRuntime, scorerView, withMatchLock, undoLastEvent } from './runtime.js';
 import { publishMatchUpdate } from '../realtime/hub.js';
-import { assertCanGoLive, invalidateActiveMatch, isInPlay, withActivationLock } from './active.js';
+import {
+  assertCanGoLive, claimActiveLock, invalidateActiveMatch, isInPlay, releaseActiveLock, withActivationLock,
+} from './active.js';
 
 const SCORING_STATUSES = new Set([
   MATCH_STATUS.READY, MATCH_STATUS.LIVE, MATCH_STATUS.INNINGS_BREAK, MATCH_STATUS.SECOND_INNINGS,
@@ -125,14 +127,21 @@ async function executeLocked(matchId, cmd, user) {
     effective = [...rt.effective, { seq, type: doc.type, payload: doc.payload, label: doc.label }];
   }
 
-  // One match in play at a time: a command that moves this match INTO play (the first ball of
-  // the match, or an undo that reopens a finished one) is re-checked under the global
-  // activation lock. Ordinary deliveries never take that lock.
+  // One match in play at a time, across all categories: a command that moves this match INTO
+  // play (the first ball of the match, or an undo that reopens a finished one) is re-checked under
+  // the process-wide activation lock and then claims the database lock atomically before the event
+  // is committed. Ordinary deliveries never touch either lock.
   if (isInPlay(deriveStatus(next)) && !isInPlay(rt.match.status)) {
     const starting = cmd.type === EVENT_TYPES.START_INNINGS && next.innings.length === 1;
     return withActivationLock(async () => {
       await assertCanGoLive(rt.id, { starting });
-      return commit();
+      const claimed = await claimActiveLock(rt.match, user);
+      try {
+        return await commit();
+      } catch (err) {
+        if (claimed) await releaseActiveLock(rt.match._id);
+        throw err;
+      }
     });
   }
   return commit();
@@ -172,6 +181,8 @@ async function executeLocked(matchId, cmd, user) {
     if (cmd.clientEventId) rt.clientIds.add(cmd.clientEventId);
     rt.views = {};
     await syncMatchDocument(rt);
+    // An undo of the opening START_INNINGS takes the match back to "ready": no longer active.
+    if (prevStatus !== MATCH_STATUS.READY && rt.match.status === MATCH_STATUS.READY) await releaseActiveLock(rt.match._id);
 
     return { rt, duplicate: false, version: seq, effects, prevStatus, dbMs, label: doc.label };
   }

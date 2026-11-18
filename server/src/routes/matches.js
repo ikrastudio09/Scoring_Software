@@ -10,6 +10,7 @@ import { ttlCache } from '../utils/ttlCache.js';
 import { notFound } from '../utils/errors.js';
 import { editCommentary, getCommentary } from '../services/commentary.js';
 import { getMatchMvp } from '../services/stats.js';
+import { resolveCategory } from '../services/categories.js';
 
 const listCache = ttlCache(2000);
 
@@ -18,9 +19,13 @@ const noStore = (res) => res.set('Cache-Control', 'no-store');
 
 // ── public, read-only ──
 router.get('/', validate(v.matchListQuery, 'query'), async (req, res) => {
+  const q = req.validQuery;
+  // A team filter already implies its category; otherwise list the requested (or default) category.
+  const category = q.team && !q.category ? null : await resolveCategory(q.category);
+  const load = () => matches.listMatches({ ...q, category });
   // Anonymous viewers share a 2 s cache; signed-in staff always get fresh data.
-  const load = () => matches.listMatches(req.validQuery);
-  const list = req.headers.authorization ? await load() : await listCache.get(JSON.stringify(req.validQuery), load);
+  const key = JSON.stringify({ ...q, category: category ? String(category._id) : null });
+  const list = req.headers.authorization ? await load() : await listCache.get(key, load);
   res.json({ matches: list });
 });
 

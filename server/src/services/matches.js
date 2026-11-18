@@ -4,12 +4,12 @@ import mongoose from 'mongoose';
 import { ERROR_CODES, MATCH_STATUS, SOCKET_EVENTS } from '@cricket/shared';
 import { Match, MatchEvent, Player, Team } from '../models/index.js';
 import { AppError, badRequest, conflict, notFound } from '../utils/errors.js';
-import { getTournament } from './tournament.js';
+import { categoryConfig, categoryOf, resolveCategory } from './categories.js';
 import { audit } from './audit.js';
 import { getRuntime, invalidateRuntime, withMatchLock } from './runtime.js';
 import { publishStatusChange, publishTournament } from '../realtime/hub.js';
 import { getMatchMvp, onResultsChanged } from './stats.js';
-import { invalidateActiveMatch } from './active.js';
+import { invalidateActiveMatch, releaseActiveLock } from './active.js';
 
 const S = MATCH_STATUS;
 const TEAM_FIELDS = 'name shortName color logoUrl group';
@@ -26,6 +26,7 @@ export function serializeMatch(m) {
     : t ? { id: String(t) } : label ? { id: null, name: label, shortName: 'TBD' } : null);
   return {
     id: String(m._id),
+    category: m.category ? String(m.category) : null,
     number: m.number,
     stage: m.stage,
     group: m.group,
@@ -63,8 +64,10 @@ export function serializeMatch(m) {
   };
 }
 
+/** filter.category = a category document (required: matches are always listed per category). */
 export async function listMatches(filter = {}) {
   const q = {};
+  if (filter.category) q.category = filter.category._id;
   if (filter.status) q.status = { $in: String(filter.status).split(',') };
   if (filter.stage) q.stage = filter.stage;
   if (filter.team) q.$or = [{ teamA: filter.team }, { teamB: filter.team }];
@@ -93,24 +96,31 @@ async function hasEvents(matchId) {
   return Boolean(await MatchEvent.exists({ match: matchId }));
 }
 
-async function assertTeams(teamA, teamB) {
+/** Both teams must exist and belong to the match's category. */
+async function assertTeams(teamA, teamB, category) {
   if (teamA && teamB && String(teamA) === String(teamB)) throw badRequest('A team cannot play itself');
   const ids = [teamA, teamB].filter(Boolean);
-  if (ids.length && (await Team.countDocuments({ _id: { $in: ids } })) !== ids.length) throw badRequest('Unknown team');
+  if (ids.length && (await Team.countDocuments({ _id: { $in: ids }, category: category._id })) !== ids.length) {
+    throw badRequest(`Unknown team, or a team from another category than ${category.name}`);
+  }
 }
 
-export async function createMatch(data, user) {
-  const t = await getTournament();
-  await assertTeams(data.teamA, data.teamB);
-  const number = data.number ?? ((await Match.findOne({}, 'number').sort({ number: -1 }).lean())?.number ?? 0) + 1;
-  const { playersPerSide, ...ruleDefaults } = t.rules;
+export async function createMatch({ category: categoryRef, ...data }, user) {
+  const category = await resolveCategory(categoryRef);
+  const { rules } = await categoryConfig(category);
+  await assertTeams(data.teamA, data.teamB, category);
+  // Numbers restart in every category.
+  const number = data.number ?? ((await Match.findOne({ category: category._id }, 'number').sort({ number: -1 }).lean())?.number ?? 0) + 1;
+  if (await Match.exists({ category: category._id, number })) throw conflict(`${category.name} Match ${number} already exists`);
+  const { playersPerSide, ...ruleDefaults } = rules;
   const doc = await Match.create({
     ...data,
+    category: category._id,
     number,
     rules: { ...ruleDefaults, ...(data.rules || {}) },
     status: S.SCHEDULED,
   });
-  await audit(user, 'match.create', 'match', doc._id, { number });
+  await audit(user, 'match.create', 'match', doc._id, { number, category: category.key });
   publishTournament(SOCKET_EVENTS.MATCH_STATUS_CHANGED, { matchId: String(doc._id), status: doc.status });
   return getMatch(doc._id);
 }
@@ -134,7 +144,7 @@ export async function updateMatch(id, data, user) {
     const structural = ['teamA', 'teamB', 'rules'].filter((k) => data[k] !== undefined);
     if (structural.length) {
       if (started) throw conflict('Teams and rules cannot change after scoring has started', ERROR_CODES.INVALID_TRANSITION);
-      await assertTeams(data.teamA ?? m.teamA, data.teamB ?? m.teamB);
+      await assertTeams(data.teamA ?? m.teamA, data.teamB ?? m.teamB, await categoryOf(m));
       if (data.rules) set.rules = { ...m.rules.toObject(), ...data.rules };
       for (const k of ['teamA', 'teamB']) {
         if (data[k] !== undefined && String(data[k]) !== String(m[k])) {
@@ -168,10 +178,10 @@ export async function deleteMatch(id, user) {
 
 /** Toss and playing XIs. Allowed until the first scoring event. */
 export async function setupMatch(id, { toss, playingXI }, user) {
-  const t = await getTournament();
   return withMatchLock(id, async () => {
     const m = await Match.findById(id);
     if (!m) throw notFound('Match');
+    const { rules } = await categoryConfig(await categoryOf(m));
     if (![S.SCHEDULED, S.READY].includes(m.status)) {
       throw conflict(`Cannot set up a match that is ${m.status.toLowerCase()}`, ERROR_CODES.INVALID_TRANSITION);
     }
@@ -181,7 +191,7 @@ export async function setupMatch(id, { toss, playingXI }, user) {
     const teams = [String(m.teamA), String(m.teamB)];
     if (!teams.includes(String(toss.winner))) throw badRequest('Toss winner must be one of the two teams');
 
-    const max = t.rules.playersPerSide;
+    const max = rules.playersPerSide;
     for (const [side, teamId] of [['teamA', m.teamA], ['teamB', m.teamB]]) {
       const ids = playingXI[side].map(String);
       if (new Set(ids).size !== ids.length) throw badRequest(`Duplicate player in ${side} XI`);
@@ -267,6 +277,7 @@ export async function confirmResult(id, { playerOfMatch }, user) {
     rt.match = { ...m, result: { ...m.result, confirmed: true, confirmedAt, confirmedBy: user?.username, playerOfMatch: playerOfMatch || null } };
     rt.views = {};
     invalidateActiveMatch();
+    await releaseActiveLock(m._id);
     await audit(user, 'match.confirm', 'match', id, { result: m.result.text, playerOfMatch });
   });
   const rt = await getRuntime(id);

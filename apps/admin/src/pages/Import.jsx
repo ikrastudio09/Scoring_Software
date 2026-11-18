@@ -1,9 +1,11 @@
 // Auction / registration import: files → server validation → preview → confirm.
 // Nothing is written until the admin confirms the exact data that was previewed.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { performanceText as perfText } from '@cricket/shared';
 import { api } from '../lib/runtime.js';
 import { readImportFile } from '../lib/importFiles.js';
 import { Button, Card, ErrorBox, PageHeader, useToast } from '../components/ui.jsx';
+import { useCategory } from '../lib/category.jsx';
 
 const ACTION = {
   create: ['New', 'bg-emerald-100 text-emerald-800'],
@@ -15,6 +17,20 @@ const ACTION = {
 function Pill({ action }) {
   const [label, cls] = ACTION[action] || [action, 'bg-slate-100'];
   return <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${cls}`}>{label}</span>;
+}
+
+function HistoryLine({ h }) {
+  if (!h) return null;
+  const prev = perfText(h.previousYear);
+  const before = perfText(h.overallPrevious);
+  return (
+    <p className="text-[11px] font-normal text-slate-500" title={[h.raw, ...h.flags.map((f) => `⚠ ${f.message}`)].filter(Boolean).join('\n')}>
+      {h.keptManual ? 'History corrected by an admin — kept' : <>
+        Last season: {prev || '—'} <span className="text-slate-300">|</span> Before: {before || '—'}
+      </>}
+      {h.flags.length > 0 && <span className="ml-1 font-semibold text-amber-700">⚠ {h.flags.length}</span>}
+    </p>
+  );
 }
 
 function FilePick({ label, hint, file, onFile }) {
@@ -29,19 +45,25 @@ function FilePick({ label, hint, file, onFile }) {
 
 export default function Import() {
   const toast = useToast();
+  const { key, category } = useCategory();
   const [files, setFiles] = useState({ players: null, teams: null });
   const [payload, setPayload] = useState(null);
   const [report, setReport] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [done, setDone] = useState(null);
+  // playerID → existing record the admin confirmed is the same person (offered as a candidate).
+  const [links, setLinks] = useState({});
+
+  // A preview belongs to one category: switching category discards it.
+  useEffect(() => { setReport(null); setPayload(null); setDone(null); setLinks({}); }, [key]);
 
   const setFile = (kind, f) => { setFiles((x) => ({ ...x, [kind]: f })); setReport(null); setDone(null); };
 
   const preview = async () => {
     setBusy(true); setErr(null); setReport(null); setDone(null);
     try {
-      const body = { players: [], teams: [] };
+      const body = { category: key, players: [], teams: [] };
       for (const kind of ['players', 'teams']) {
         if (!files[kind]) continue;
         const parsed = await readImportFile(files[kind]);
@@ -49,6 +71,7 @@ export default function Import() {
         body.teams.push(...(parsed.teams || []), ...(kind === 'teams' ? parsed.rows || [] : []));
       }
       setPayload(body);
+      setLinks({});
       setReport(await api.post('/admin/import/auction/preview', body, { timeoutMs: 30000 }));
     } catch (e) { setErr(e); } finally { setBusy(false); }
   };
@@ -56,10 +79,21 @@ export default function Import() {
   const confirm = async () => {
     setBusy(true); setErr(null);
     try {
-      const res = await api.post('/admin/import/auction/commit', { ...payload, hash: report.hash }, { timeoutMs: 60000 });
+      const res = await api.post('/admin/import/auction/commit', { ...payload, links, hash: report.hash }, { timeoutMs: 60000 });
       setDone(res.result);
       setReport(null);
       toast('Tournament data imported', 'success');
+    } catch (e) { setErr(e); } finally { setBusy(false); }
+  };
+
+  // Ticking "same person" re-runs the preview with that link so the plan shows exactly what happens.
+  const toggleLink = async (p, on) => {
+    const next = { ...links };
+    if (on) next[p.playerID] = p.candidate?.id || links[p.playerID]; else delete next[p.playerID];
+    setBusy(true); setErr(null);
+    try {
+      setReport(await api.post('/admin/import/auction/preview', { ...payload, links: next }, { timeoutMs: 30000 }));
+      setLinks(next);
     } catch (e) { setErr(e); } finally { setBusy(false); }
   };
 
@@ -67,12 +101,15 @@ export default function Import() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
-      <PageHeader title="Import auction data" />
+      <PageHeader title={`Import auction data — ${category?.name || ''}`} />
+      <p className="text-sm text-slate-600">Players and teams are imported into the <b>{category?.name}</b> category (switch it in the header). playerIDs and team names only need to be unique within a category.</p>
       <Card className="space-y-3 p-4 text-sm text-slate-600">
         <p>
           Load the players and teams exported from the auction / registration system. <b>playerID</b> and <b>teamID</b> are the only
-          keys used to connect a player to a team — names are display only. After the import the scoring system has its own copy
-          and does not need the auction system during matches. Phone numbers and ages are <b>never</b> imported.
+          keys used to connect a player to a team inside this category — names are display only. After the import the scoring system
+          has its own copy and does not need the auction system during matches. Phone numbers are <b>never</b> imported; age is kept
+          for administrators only. Previous statistics (<i>ASD … | 2024 …</i> text, or <code>previousYearPerformance</code> /
+          <code>overallPreviousPerformance</code> fields) become two separate records: last season, and all seasons before it.
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <FilePick label="Players file" hint="Player export: .json, .csv or .xlsx (an .xlsx with Players and Teams sheets can go here alone)" file={files.players} onFile={(f) => setFile('players', f)} />
@@ -136,7 +173,16 @@ export default function Import() {
                         {t.players.map((p) => (
                           <tr key={p.playerID} className="border-t border-slate-100">
                             <td className="tnum px-3 py-1.5 text-xs text-slate-400">{p.playerID}</td>
-                            <td className="py-1.5 font-medium">{p.name}<span className="ml-1 text-xs font-normal text-slate-500">{p.playerType}</span></td>
+                            <td className="py-1.5 font-medium">
+                              {p.name}<span className="ml-1 text-xs font-normal text-slate-500">{p.playerType}</span>
+                              <HistoryLine h={p.history} />
+                              {(p.candidate || links[p.playerID]) && (
+                                <label className="mt-0.5 flex items-center gap-1.5 text-[11px] font-normal text-violet-800">
+                                  <input type="checkbox" disabled={busy} checked={Boolean(links[p.playerID])} onChange={(e) => toggleLink(p, e.target.checked)} />
+                                  Same person as the existing record “{p.candidate?.name || p.name}” (no playerID) — tick only if you are sure
+                                </label>
+                              )}
+                            </td>
                             <td className="tnum px-2 text-right text-xs">{p.soldPoints.toLocaleString()}</td>
                             <td className="pr-3 text-right"><Pill action={p.action} /></td>
                           </tr>

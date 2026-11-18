@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router';
+import { useCategoryGuard } from '../lib/category.jsx';
 import { useApi, useLiveMatch } from '@cricket/client';
 import { api, live } from '../lib/runtime.js';
 import LivePanel from '../components/LivePanel.jsx';
@@ -15,6 +16,7 @@ export default function MatchPage() {
   const { data, error, reload } = useApi(api, `/matches/${id}`, [id]);
   const { live: view, version, lastEnvelope } = useLiveMatch({ api, live, matchId: id, channel: 'viewer' });
   const sc = useApi(api, tab === 'scorecard' || tab === 'overs' ? `/matches/${id}/scorecard` : null, [id, tab]);
+  useCategoryGuard(data?.match?.category);
 
   // Keep the scorecard in step with the live version (an update arrives after every ball).
   useEffect(() => { if (version && (tab === 'scorecard' || tab === 'overs')) sc.reload(); }, [version]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -36,7 +38,7 @@ export default function MatchPage() {
 
   return (
     <div>
-      <Card className="mb-4 p-4">
+      {/* <Card className="mb-4 p-4">
         <div className="mb-3 flex items-center justify-between text-xs text-slate-500">
           <span>Match {m.number}{m.stage !== 'league' && ` · ${STAGE_LABEL[m.stage]}`} · {fmtDateTime(m.scheduledAt)}</span>
           <StatusBadge status={status} />
@@ -59,7 +61,7 @@ export default function MatchPage() {
         {m.result?.playerOfMatch?.name && (
           <p className="mt-1 text-center text-xs text-slate-600">Player of the match: <PlayerLink id={m.result.playerOfMatch.id} className="font-semibold">{m.result.playerOfMatch.name}</PlayerLink></p>
         )}
-      </Card>
+      </Card> */}
 
       <Tabs value={tab} onChange={setTab} tabs={[{ value: 'live', label: ['LIVE', 'INNINGS_BREAK', 'SECOND_INNINGS'].includes(status) ? 'Live' : 'Summary' }, { value: 'scorecard', label: 'Scorecard' }, { value: 'mvp', label: 'MVP' }, { value: 'overs', label: 'Overs' }, { value: 'info', label: 'Info' }]} />
       <div className="mt-4">

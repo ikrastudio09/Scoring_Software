@@ -5,12 +5,17 @@
 //   applyAuctionImport(plan)      write it
 //
 // The scoring system never calls the auction system at runtime: after this import the scoring
-// database owns its own snapshot. playerID and teamID are the only relationship keys — names
-// are display data. Private registration data (playerPhone, Age) is dropped here and never stored.
+// database owns its own snapshot. playerID and teamID are the only relationship keys inside one
+// category of one season — names are display data, and a playerID is NOT a person across seasons
+// (see services/identities.js). playerPhone is dropped here and never stored; Age is stored for
+// administrators only. The two historical aggregates (previous year, overall previous) are read
+// from structured fields or parsed from the "Previous Statistics" text.
 
 import { createHash } from 'node:crypto';
 import mongoose from 'mongoose';
+import { PERFORMANCE_FIELDS, SUPPLIED_RATES, derivePreviousPerformance, parsePreviousStatistics, totalsOf } from '@cricket/shared';
 import { Match, Player, PlayerMatchStat, Team } from '../models/index.js';
+import { assignNewPlayerIdentities, assignNewTeamIdentity } from './identities.js';
 
 export const PLAYING_STYLES = ['Right Arm Batting', 'Right Arm Balling', 'Left Arm Batting', 'Left Arm Balling'];
 const STYLE_BY_KEY = new Map(PLAYING_STYLES.map((s) => [norm(s), s]));
@@ -37,6 +42,74 @@ function toNumber(v) {
 }
 const isId = (n) => Number.isInteger(n) && n > 0;
 const text = (v) => (blank(v) ? '' : String(v).trim());
+/** Text where the export writes NULL / N/A for "none". */
+const optionalText = (v) => (/^(null|n\/?a|none|-)$/i.test(text(v)) ? '' : text(v));
+
+// Field aliases accepted in structured performance blocks (case/punctuation-insensitive).
+const PERF_ALIASES = {
+  innings: ['inns'], ballsFaced: ['balls'], notOuts: ['notout'], runsConceded: ['conceded'],
+  playerOfMatch: ['mom', 'potm', 'manofthematch'],
+};
+const RATE_ALIASES = { battingAvg: ['avg', 'average', 'battingaverage'], strikeRate: ['sr'], economy: ['econ'], bowlingAvg: ['bowlingaverage'] };
+
+/** A structured aggregate (e.g. previousYearPerformance: {matches, runs, …}) → { block, problems }. */
+export function readPerformanceBlock(obj) {
+  const problems = [];
+  if (obj === null || obj === undefined || obj === '') return { block: null, problems };
+  if (typeof obj !== 'object' || Array.isArray(obj)) return { block: null, problems: ['is not an object'] };
+  const block = {};
+  const used = new Set();
+  const take = (key, aliases = []) => {
+    for (const [k, v] of Object.entries(obj)) {
+      if ([key, ...aliases].map(norm).includes(norm(k))) { used.add(k); return v; }
+    }
+    return undefined;
+  };
+  for (const f of PERFORMANCE_FIELDS) {
+    const raw = take(f.key, PERF_ALIASES[f.key]);
+    const n = toNumber(raw);
+    if (n === undefined) continue;
+    if (!Number.isInteger(n) || n < 0) problems.push(`${f.key} "${raw}" is not a whole number ≥ 0`); else block[f.key] = n;
+  }
+  // Overs (6-ball) are converted exactly to balls when balls bowled are not given.
+  const overs = take('overs');
+  if (!blank(overs) && block.ballsBowled === undefined) {
+    const m = String(overs).match(/^(\d+)(?:\.([0-5]))?$/);
+    if (m) block.ballsBowled = Number(m[1]) * 6 + Number(m[2] || 0); else problems.push(`overs "${overs}" is not like 12.3`);
+  }
+  const supplied = {};
+  for (const r of SUPPLIED_RATES) {
+    const raw = take(r.key, RATE_ALIASES[r.key]);
+    const n = toNumber(raw);
+    if (n === undefined) continue;
+    if (!(n >= 0)) problems.push(`${r.key} "${raw}" is not a number`); else supplied[r.key] = n;
+  }
+  if (Object.keys(supplied).length) block.supplied = supplied;
+  const label = take('label', ['seasonLabel']);
+  if (!blank(label)) block.meta = { label: String(label) };
+  for (const k of Object.keys(obj)) if (!used.has(k)) problems.push(`unknown field "${k}"`);
+  return { block: Object.keys(totalsOf(block)).length || block.supplied ? block : null, problems };
+}
+
+/** The player's historical aggregates from structured blocks or the "Previous Statistics" text. */
+function readHistory(raw) {
+  const structuredPrev = field(raw, 'previousYearPerformance');
+  const structuredAll = field(raw, 'overallPreviousPerformance');
+  if (structuredPrev !== undefined || structuredAll !== undefined) {
+    const a = readPerformanceBlock(structuredPrev);
+    const b = readPerformanceBlock(structuredAll);
+    const flags = [
+      ...a.problems.map((m) => ({ code: 'HISTORY_FIELD_INVALID', message: `previousYearPerformance: ${m}` })),
+      ...b.problems.map((m) => ({ code: 'HISTORY_FIELD_INVALID', message: `overallPreviousPerformance: ${m}` })),
+    ];
+    return { previousYear: a.block, overallPrevious: b.block, raw: null, flags };
+  }
+  const txt = field(raw, 'previousPerformance', 'previousStatistics', 'previousStats');
+  if (txt === undefined) return null;
+  if (typeof txt === 'object') return { previousYear: null, overallPrevious: null, raw: null, flags: [{ code: 'HISTORY_UNREADABLE', message: 'previousPerformance is not text' }] };
+  const out = derivePreviousPerformance(parsePreviousStatistics(txt));
+  return { ...out, raw: text(txt) || null };
+}
 
 function photoUrlOf(raw) {
   const photo = field(raw, 'playerPhoto');
@@ -75,6 +148,7 @@ export function validateAuctionImport(input) {
 
   // ── players ──
   const players = new Map(); // playerID → player
+  const historyFlags = [];
   let phones = 0;
   rawPlayers.forEach((raw, i) => {
     if (!raw || typeof raw !== 'object') return;
@@ -82,7 +156,7 @@ export function validateAuctionImport(input) {
     const idRaw = field(raw, 'playerID', 'playerId');
     const id = toNumber(idRaw);
     const name = text(field(raw, 'playerName', 'name'));
-    if (!blank(field(raw, 'playerPhone', 'phone'))) phones += 1;
+    if (!blank(field(raw, 'playerPhone', 'phone', 'mobile', 'mobileNo', 'mobileNumber'))) phones += 1;
     if (id === undefined) return err('PLAYER_ID_MISSING', row, `${name || 'A player'} has no playerID.`);
     if (!isId(id)) return err('PLAYER_ID_INVALID', row, `playerID "${idRaw}" is not a positive whole number.`);
     const ref = `Player ${id}`;
@@ -102,6 +176,20 @@ export function validateAuctionImport(input) {
     const photoUrl = photoUrlOf(raw);
     if (photoUrl && !/^https?:\/\//i.test(photoUrl)) warn('PHOTO_URL_INVALID', ref, 'Photo URL is not an http(s) link and was ignored.');
 
+    const ageRaw = field(raw, 'Age', 'age');
+    const ageNum = toNumber(ageRaw);
+    let age = null;
+    if (ageNum !== undefined) {
+      if (Number.isInteger(ageNum) && ageNum >= 5 && ageNum <= 100) age = ageNum;
+      else warn('AGE_INVALID', ref, `Age "${ageRaw}" is not plausible and was not imported.`);
+    }
+    const prevTeam = optionalText(field(raw, 'previousTeam'));
+    const prevPointsRaw = optionalText(field(raw, 'previousTeamPoints', 'previousPoints'));
+    const prevPoints = toNumber(prevPointsRaw);
+    if (prevPointsRaw && !(prevPoints >= 0)) warn('PREVIOUS_POINTS_INVALID', ref, `previousTeamPoints "${prevPointsRaw}" is not a number and was not imported.`);
+    const history = readHistory(raw);
+    for (const f of history?.flags || []) historyFlags.push({ ...f, ref });
+
     const teamIdRaw = field(raw, 'teamID', 'teamId');
     const teamID = toNumber(teamIdRaw);
     if (teamID !== undefined && !isId(teamID)) err('TEAM_ID_INVALID', ref, `teamID "${teamIdRaw}" is not a positive whole number.`);
@@ -115,10 +203,26 @@ export function validateAuctionImport(input) {
       soldPoints: Number.isFinite(soldPoints) && soldPoints >= 0 ? soldPoints : 0,
       playerPool: Number.isFinite(playerPool) && playerPool >= 0 ? playerPool : null,
       statusGiven: ['sold', 'unsold'].includes(statusRaw) ? statusRaw : null,
+      age,
+      previousSeason: prevTeam || prevPoints > 0 ? { team: prevTeam || null, points: prevPoints >= 0 ? prevPoints : null } : null,
+      history,
       teamHint: isId(teamID) ? { teamID, teamName: text(field(raw, 'teamName')) } : null,
     });
   });
   if (phones) info.push({ code: 'PRIVATE_DATA_DROPPED', message: `playerPhone was present for ${phones} player${phones === 1 ? '' : 's'} and was NOT imported (private data).` });
+  const withAge = [...players.values()].filter((p) => p.age !== null).length;
+  if (withAge) info.push({ code: 'AGE_PRIVATE', message: `Age imported for ${withAge} player${withAge === 1 ? '' : 's'}: visible to administrators only, never shown publicly.` });
+  // History problems: one summary warning per kind (per-player details are in the preview).
+  const byCode = new Map();
+  for (const f of historyFlags) {
+    if (!byCode.has(f.code)) byCode.set(f.code, []);
+    byCode.get(f.code).push(f);
+  }
+  for (const [code, list] of byCode) {
+    warnings.push({ code, ref: list.length === 1 ? list[0].ref : `${list.length} players`, message: list.length === 1 ? list[0].message : `${list.length} players, e.g. ${list[0].ref}: ${list[0].message}` });
+  }
+  const withHistory = [...players.values()].filter((p) => p.history?.previousYear || p.history?.overallPrevious).length;
+  if (withHistory) info.push({ code: 'HISTORY_IMPORTED', message: `Previous performance found for ${withHistory} player${withHistory === 1 ? '' : 's'} (previous year and overall previous are kept separate).` });
 
   // ── teams (nested documents or flat rows, merged by teamID) ──
   const teams = new Map(); // teamID → { teamID, name, members: Map(playerID → entry) }
@@ -294,13 +398,30 @@ export function shortNameFor(name, taken) {
   return s;
 }
 
-/** Compare validated data with the database. Adds blocking errors for conflicts. */
-export async function planAuctionImport(data) {
+/** Comparable form of the snapshot fields an import may change (history: totals only). */
+function snapshotKey(p) {
+  const h = p.history || {};
+  return JSON.stringify([
+    p.age ?? null, p.previousSeason?.team ?? null, p.previousSeason?.points ?? null,
+    totalsOf(h.previousYear), totalsOf(h.overallPrevious),
+  ]);
+}
+
+/**
+ * Compare validated data with the database. Adds blocking errors for conflicts.
+ * links: { [playerID]: existingPlayerId } — the admin confirmed that an imported player is the same
+ * person as an existing record that has no playerID (offered in the preview as a candidate; never
+ * applied on a name match alone).
+ */
+export async function planAuctionImport(data, category, { links = {} } = {}) {
   const errors = [];
   const warnings = [];
+  // Everything is compared within the target category: playerIDs, teamIDs and team names are only
+  // unique per category of one season.
+  const scope = { category: category._id };
   const [dbTeams, dbPlayers] = await Promise.all([
-    Team.find({}, 'name shortName teamID').lean(),
-    Player.find({}, 'name team playerID playerType playingStyle photoUrl auction').lean(),
+    Team.find(scope, 'name shortName teamID').lean(),
+    Player.find(scope, 'name team playerID playerType playingStyle photoUrl auction age previousSeason history').lean(),
   ]);
   const teamByTid = new Map(dbTeams.filter((t) => t.teamID).map((t) => [t.teamID, t]));
   const teamByName = new Map(dbTeams.map((t) => [norm(t.name), t]));
@@ -345,9 +466,11 @@ export async function planAuctionImport(data) {
     if (teamId === undefined) continue; // team had a blocking error
     let existing = byPid.get(p.playerID);
     let action;
+    // A record without a playerID on the same team with the same name is only a CANDIDATE: it is
+    // linked when the admin ticked it in the preview, otherwise a new record is created.
+    const candidate = !existing && teamId ? unlinked.get(`${teamId}:${norm(p.name)}`) : null;
     if (existing) action = 'update';
-    else if (teamId && (existing = unlinked.get(`${teamId}:${norm(p.name)}`))) action = 'link';
-    else action = 'create';
+    else if (candidate && links[p.playerID] === String(candidate._id)) { existing = candidate; action = 'link'; } else action = 'create';
     if (existing && teamId !== String(existing.team) && appeared.has(String(existing._id))) {
       errors.push({ code: 'PLAYER_TEAM_LOCKED', ref: `Player ${p.playerID}`, message: `${p.name} has already played for another team in this tournament and cannot be moved.` });
       continue;
@@ -355,10 +478,19 @@ export async function planAuctionImport(data) {
     if (action === 'update') {
       const same = existing.name === p.name && String(existing.team) === teamId && existing.playerType === p.playerType
         && (existing.photoUrl || '') === p.photoUrl && JSON.stringify(existing.playingStyle || []) === JSON.stringify(p.playingStyle)
-        && existing.auction?.soldPoints === p.soldPoints && (existing.auction?.playerPool ?? null) === p.playerPool;
+        && existing.auction?.soldPoints === p.soldPoints && (existing.auction?.playerPool ?? null) === p.playerPool
+        && snapshotKey(existing) === snapshotKey(p);
       if (same) action = 'unchanged';
     }
-    playerPlan.push({ ...p, action, id: existing ? String(existing._id) : null });
+    // History an admin corrected by hand is never overwritten by a re-import.
+    const keepHistory = existing?.history?.source === 'manual';
+    if (keepHistory && p.history) {
+      warnings.push({ code: 'HISTORY_MANUAL_KEPT', ref: `Player ${p.playerID}`, message: `${p.name}: previous performance was corrected by an admin and is kept; the file's values are ignored.` });
+    }
+    playerPlan.push({
+      ...p, action, keepHistory, id: existing ? String(existing._id) : null,
+      candidate: candidate && action !== 'link' ? { id: String(candidate._id), name: candidate.name } : null,
+    });
   }
   const imported = new Set(data.players.map((p) => p.playerID));
   const missing = dbPlayers.filter((p) => p.playerID && !imported.has(p.playerID)).length;
@@ -368,13 +500,36 @@ export async function planAuctionImport(data) {
   return { errors, warnings, teams: teamPlan, players: playerPlan, counts: { teams: count(teamPlan), players: count(playerPlan) } };
 }
 
-export async function applyAuctionImport(plan) {
-  const taken = new Set((await Team.find({}, 'shortName').lean()).map((t) => t.shortName));
+/** Snapshot fields of an imported player, with the seasons the aggregates cover. */
+function snapshotFields(p, category, now) {
+  const fields = {
+    age: p.age ?? undefined,
+    previousSeason: p.previousSeason || undefined,
+  };
+  if (p.history && !p.keepHistory) {
+    const withMeta = (block, meta) => (block ? { ...block, meta: { ...(block.meta || {}), ...meta } } : null);
+    fields.history = {
+      previousYear: withMeta(p.history.previousYear, { season: category.season - 1 }),
+      overallPrevious: withMeta(p.history.overallPrevious, { toSeason: category.season - 2 }),
+      raw: p.history.raw || undefined,
+      flags: p.history.flags || [],
+      source: 'auction',
+      updatedAt: now,
+    };
+  }
+  return fields;
+}
+
+export async function applyAuctionImport(plan, category) {
+  const scope = { category: category._id };
+  const taken = new Set((await Team.find(scope, 'shortName').lean()).map((t) => t.shortName));
   const teamIds = new Map();
-  let color = (await Team.countDocuments()) % TEAM_COLORS.length;
+  let color = (await Team.countDocuments(scope)) % TEAM_COLORS.length;
   for (const t of plan.teams) {
     if (t.action === 'create') {
-      const doc = await Team.create({ name: t.name, teamID: t.teamID, shortName: shortNameFor(t.name, taken), color: TEAM_COLORS[color++ % TEAM_COLORS.length] });
+      const fields = { category: category._id, name: t.name, teamID: t.teamID, shortName: shortNameFor(t.name, taken), color: TEAM_COLORS[color++ % TEAM_COLORS.length] };
+      await assignNewTeamIdentity(fields);
+      const doc = await Team.create(fields);
       teamIds.set(t.teamID, doc._id);
     } else {
       if (t.action !== 'unchanged') await Team.updateOne({ _id: t.id }, { $set: { name: t.name, teamID: t.teamID } });
@@ -383,9 +538,11 @@ export async function applyAuctionImport(plan) {
   }
   const now = new Date();
   const ops = [];
+  const inserts = [];
   for (const p of plan.players) {
     if (p.action === 'unchanged') continue;
     const fields = {
+      category: category._id,
       name: p.name,
       team: teamIds.get(p.teamID),
       playerID: p.playerID,
@@ -393,13 +550,17 @@ export async function applyAuctionImport(plan) {
       playingStyle: p.playingStyle,
       photoUrl: p.photoUrl || undefined,
       auction: { soldPoints: p.soldPoints, playerPool: p.playerPool ?? undefined, status: p.status, importedAt: now },
+      ...snapshotFields(p, category, now),
     };
     if (p.id) {
       ops.push({ updateOne: { filter: { _id: p.id }, update: { $set: fields } } });
     } else {
-      ops.push({ insertOne: { document: { ...fields, role: roleOf(p.playerType), battingStyle: battingStyleOf(p.playingStyle), bowlingStyle: bowlingStyleOf(p.playingStyle) } } });
+      inserts.push({ ...fields, role: roleOf(p.playerType), battingStyle: battingStyleOf(p.playingStyle), bowlingStyle: bowlingStyleOf(p.playingStyle) });
     }
   }
+  // Every new season record starts as a new person; an admin links identities afterwards.
+  await assignNewPlayerIdentities(inserts);
+  for (const document of inserts) ops.push({ insertOne: { document } });
   if (ops.length) await Player.bulkWrite(ops, { ordered: true });
   return { teams: plan.counts.teams, players: plan.counts.players };
 }

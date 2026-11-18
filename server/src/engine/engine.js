@@ -406,7 +406,7 @@ function delivery(ctx, p, seq) {
       dismissedId = inn.striker;
     }
     if (w.fielderId && !allowsFielder(w.type)) fail(E.INVALID_WICKET, 'This dismissal does not involve a fielder');
-    if (requiresFielder(w.type) && !w.fielderId && !w.substituteFielder) fail(E.INVALID_WICKET, 'Select the fielder');
+    if (requiresFielder(w.type) && !w.fielderId && !w.substituteFielder) fail(E.INVALID_WICKET, w.type === 'stumped' ? 'Select the wicketkeeper' : 'Select the fielder');
     if (w.fielderId && !inXI(setup, inn.bowlingTeam, w.fielderId)) fail(E.INVALID_WICKET, 'Fielder is not in the fielding XI');
   }
 

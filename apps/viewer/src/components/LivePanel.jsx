@@ -49,7 +49,7 @@ export function LiveBadge({ className = '' }) {
         <span className="live-ping absolute inline-flex h-full w-full rounded-full bg-white" />
         <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-white" />
       </span>
-      Live · ball by ball
+      Live
     </span>
   );
 }
@@ -214,9 +214,11 @@ export default function LivePanel({ live, envelope, children }) {
     <div className="space-y-3">
       <LiveHero live={live} envelope={envelope} />
       {live.state === 'IN_PROGRESS' && <CreaseCard c={c} />}
-      <BonusPoint bonus={live.bonus} />
-      <RecentOvers c={c} />
+      {c.inningsNumber === 2 && (
+        <BonusPoint bonus={live.bonus} />
+      )}
       {children}
+      <RecentOvers c={c} />
     </div>
   );
 }

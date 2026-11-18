@@ -9,14 +9,19 @@ import { config } from './config/env.js';
 import { errorHandler, notFoundHandler, publicLimiter, requestLogger } from './middleware/http.js';
 import matchesRouter from './routes/matches.js';
 import catalogRouter from './routes/catalog.js';
+import peopleRouter from './routes/people.js';
 import { adminRouter, authRouter, healthRouter, publicRouter } from './routes/misc.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
+// Origins of the Android app's WebView: https://localhost normally; http://localhost for builds
+// made for a plain-HTTP API on the local network (apps/viewer/scripts/cap-sync.mjs).
+const APP_ORIGINS = ['https://localhost', 'http://localhost', 'capacitor://localhost'];
+
 export function corsOrigin() {
-  // Capacitor's Android WebView uses https://localhost; dev servers use localhost ports.
-  if (!config.corsOrigins.length) return config.isProd ? ['https://localhost', 'capacitor://localhost'] : true;
-  return [...config.corsOrigins, 'https://localhost', 'capacitor://localhost'];
+  // Dev servers use localhost ports: anything goes outside production.
+  if (!config.corsOrigins.length) return config.isProd ? APP_ORIGINS : true;
+  return [...config.corsOrigins, ...APP_ORIGINS];
 }
 
 export function createApp() {
@@ -49,6 +54,7 @@ export function createApp() {
   api.use(healthRouter);
   api.use('/auth', authRouter);
   api.use('/admin', adminRouter);
+  api.use('/admin', peopleRouter);
   api.use('/matches', matchesRouter);
   api.use(catalogRouter);
   api.use(publicRouter);
